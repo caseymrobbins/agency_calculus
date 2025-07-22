@@ -1,0 +1,88 @@
+{
+    "version": "1.0",
+    "description": "Historical collapse cases for model validation",
+    "cases": {
+      "HTI": {
+        "name": "Haiti",
+        "prediction_year": 2024,
+        "expected_brittleness": 8.5,
+        "tolerance": 1.0,
+        "description": "Gang violence leading to state collapse",
+        "key_indicators": ["political_agency", "social_agency", "violence_level"],
+        "notes": "Barbeque gang coalition, presidential assassination aftermath",
+        "validation_priority": "high"
+      },
+      "SUN": {
+        "name": "Soviet Union",
+        "prediction_year": 1991,
+        "expected_brittleness": 9.0,
+        "tolerance": 1.0,
+        "description": "Economic and political system collapse",
+        "key_indicators": ["economic_agency", "political_agency", "systemic_stress"],
+        "notes": "Glasnost/Perestroika, economic stagnation, nationalist movements",
+        "validation_priority": "high"
+      },
+      "RWA": {
+        "name": "Rwanda",
+        "prediction_year": 1994,
+        "expected_brittleness": 9.5,
+        "tolerance": 0.8,
+        "description": "Ethnic violence escalating to genocide",
+        "key_indicators": ["social_agency", "polarization_index", "violence_level"],
+        "notes": "Hutu-Tutsi tensions, radio propaganda, presidential plane crash",
+        "validation_priority": "high"
+      },
+      "CHL": {
+        "name": "Chile",
+        "prediction_year": 1973,
+        "expected_brittleness": 7.5,
+        "tolerance": 1.2,
+        "description": "Military coup and democratic breakdown",
+        "key_indicators": ["political_agency", "polarization_index", "economic_agency"],
+        "notes": "Allende government, CIA involvement, economic crisis",
+        "validation_priority": "medium"
+      },
+      "IRN": {
+        "name": "Iran",
+        "prediction_year": 1979,
+        "expected_brittleness": 8.0,
+        "tolerance": 1.0,
+        "description": "Revolution and regime change",
+        "key_indicators": ["political_agency", "social_agency", "protest_intensity"],
+        "notes": "Shah's regime, Islamic revolution, oil crisis",
+        "validation_priority": "medium"
+      },
+      "YUG": {
+        "name": "Yugoslavia",
+        "prediction_year": 1991,
+        "expected_brittleness": 8.5,
+        "tolerance": 1.0,
+        "description": "Ethnic conflict and state dissolution",
+        "key_indicators": ["social_agency", "political_agency", "ethnic_tensions"],
+        "notes": "Post-Tito ethnic tensions, economic crisis, nationalist leaders",
+        "validation_priority": "medium"
+      },
+      "SOM": {
+        "name": "Somalia",
+        "prediction_year": 1991,
+        "expected_brittleness": 9.0,
+        "tolerance": 0.8,
+        "description": "Complete state collapse and civil war",
+        "key_indicators": ["political_agency", "economic_agency", "violence_level"],
+        "notes": "Siad Barre regime fall, clan warfare, famine",
+        "validation_priority": "high"
+      }
+    },
+    "metadata": {
+      "created": "2024-01-15",
+      "last_updated": "2024-01-15",
+      "methodology": "Expert consensus based on historical analysis",
+      "brittleness_scale": {
+        "0-3": "Low risk - stable society",
+        "3-5": "Medium risk - concerning trends",
+        "5-7": "High risk - serious instability",
+        "7-8": "Critical risk - imminent collapse likely",
+        "8-10": "Active collapse - society failing"
+      }
+    }
+  }

@@ -1,0 +1,41 @@
+# config.yaml
+# Main configuration file for Agency Monitor
+
+paths:
+  # Data paths
+  raw_historical_data_path: data/raw/historical_collapses.json
+  featured_data_path: data/featured/historical_features.json
+  validation_cases_path: data/validation/validation_cases.json
+  
+  # Model paths
+  production_model_path: models/brittleness_predictor_prod.pkl
+  metrics_path: models/validation_metrics.json
+  
+  # Output paths
+  plot_path: plots/feature_importance.png
+  validation_report_path: reports/validation_report.json
+
+# Model training parameters
+training:
+  test_size: 0.2
+  n_estimators: 5  # Ensemble size
+  max_iterations: 300
+  early_stopping_rounds: 50
+
+# Validation parameters
+validation:
+  confidence_level: 0.95
+  min_data_years: 10
+  
+# Feature engineering parameters
+features:
+  volatility_windows: [7, 30, 90]
+  trend_windows: [30, 90, 365]
+  shock_threshold: 2.0  # Standard deviations
+
+# Risk thresholds
+risk_levels:
+  LOW: 3.0
+  MEDIUM: 5.0
+  HIGH: 7.0
+  CRITICAL: 8.0           

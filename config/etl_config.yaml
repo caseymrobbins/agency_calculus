@@ -1,0 +1,55 @@
+# Configuration for ETL ingestion scripts.
+# This file defines target countries and indicators for various data sources.
+
+# Section for the World Bank API Ingestion (Task 1.2)
+world_bank:
+  # Target countries using their ISO 3166-1 alpha-3 codes.
+  # As per the validation plan, we start with USA and Haiti.
+  countries:
+    - USA
+    - HTI
+
+  # World Bank indicators identified in the data sourcing research document.
+  # These cover the Economic, Health, and Educational domains.
+  indicators:
+    # Economic Agency Indicators
+    - code: NY.GDP.MKTP.CD
+      name: "GDP (current US$)"
+    - code: NY.GDP.PCAP.CD
+      name: "GDP per capita (current US$)"
+    - code: SL.UEM.TOTL.ZS
+      name: "Unemployment, total (% of total labor force) (modeled ILO estimate)"
+    - code: SI.POV.GINI
+      name: "Gini index"
+
+    # Health Agency Indicators
+    - code: SP.DYN.LE00.IN
+      name: "Life expectancy at birth, total (years)"
+    - code: SP.DYN.IMRT.IN
+      name: "Mortality rate, infant (per 1,000 live births)"
+    - code: SH.XPD.GHED.GD.ZS
+      name: "Domestic general government health expenditure (% of GDP)"
+
+    # Educational Agency Indicators
+    - code: SE.ADT.LITR.ZS
+      name: "Literacy rate, adult total (% of people ages 15 and above)"
+    - code: SE.XPD.TOTL.GD.ZS
+      name: "Government expenditure on education, total (% of GDP)"
+
+  # Section for Bulk Data Ingestion (Task 1.3)
+  v_dem:
+    # Path to the raw CSV file within our data folder
+    file_path: "data/raw/V-Dem-CY-Full+Others-v15.csv"
+    # The version we will tag this data with in the database
+    dataset_version: "V-Dem-v15"
+    # The specific source name for logging
+    source_name: "V-Dem"
+
+  
+paths:
+  raw_historical_data: data/historical/raw_historical_cases.json
+  featured_data: data/processed/featured_historical_cases.json
+  production_model: ai/models/brittleness_predictor_prod.pkl
+  metrics: ai/models/prod_metrics.json
+  plot: ai/models/feature_importance.png
+  validation_cases: data/validation_cases.jsonm
