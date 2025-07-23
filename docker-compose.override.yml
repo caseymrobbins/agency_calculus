@@ -1,0 +1,34 @@
+# Development overrides - automatically loaded by docker-compose
+version: '3.8'
+
+services:
+  api:
+    volumes:
+      # Mount source code for hot reload
+      - ./api:/app/api
+      - ./ai:/app/ai
+      - ./agency:/app/agency
+    environment:
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+    # Enable auto-reload
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+
+  dashboard:
+    volumes:
+      # Mount dashboard code for development
+      - ./dashboard.py:/app/dashboard.py
+      - ./api:/app/api
+      - ./agency:/app/agency
+    environment:
+      - STREAMLIT_SERVER_FILE_WATCHER_TYPE=poll
+      - STREAMLIT_SERVER_RUN_ON_SAVE=true
+
+  # Development database with additional logging
+  db:
+    command: 
+      - "postgres"
+      - "-c"
+      - "log_statement=all"
+      - "-c"
+      - "log_duration=on"

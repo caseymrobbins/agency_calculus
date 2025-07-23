@@ -1,0 +1,36 @@
+# docker-compose.prod.yml
+version: '3.8'
+
+services:
+  api:
+    restart: always
+    environment:
+      - LOG_LEVEL=INFO
+    # Use Gunicorn with Uvicorn workers for production performance
+    command: gunicorn -w 4 -k uvicorn.workers.UvicornWorker api.main:app -b 0.0.0.0:8000
+
+  dashboard:
+    restart: always
+    environment:
+      - STREAMLIT_SERVER_FILE_WATCHER_TYPE=none
+      - STREAMLIT_SERVER_RUN_ON_SAVE=false
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+
+  db:
+    restart: always
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "max_connections=100"
+      - "-c"
+      - "effective_cache_size=1GB"
+      - "-c"
+      - "maintenance_work_mem=64MB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "wal_buffers=16MB"
+      - "-c"
+      - "default_statistics_target=100"

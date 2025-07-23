@@ -1,6 +1,6 @@
+-- database/schema.sql
 -- Agency Monitor Database Schema - Final Production Version
--- PostgreSQL implementation for Task 1.1, supporting all project phases.
--- This schema is well-designed and requires no major changes. It is presented here for completeness.
+-- PostgreSQL implementation supporting all project phases.
 
 -- Enable UUID extension for primary keys if not already enabled
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS observations_y2000_y2009 PARTITION OF observations FO
 CREATE TABLE IF NOT EXISTS observations_y2010_y2019 PARTITION OF observations FOR VALUES FROM (2010) TO (2020);
 CREATE TABLE IF NOT EXISTS observations_y2020_y2029 PARTITION OF observations FOR VALUES FROM (2020) TO (2030);
 
--- Table: agency_scores (processed data, input for AI models)
+-- Table: agency_scores (processed data, input for AI models) - WIDE FORMAT
 CREATE TABLE IF NOT EXISTS agency_scores (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     country_code CHAR(3) NOT NULL REFERENCES countries(country_code) ON DELETE CASCADE,
@@ -106,16 +106,15 @@ CREATE TABLE IF NOT EXISTS ingestion_logs (
     start_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     end_time TIMESTAMP WITH TIME ZONE,
     records_processed INTEGER,
-    error_message TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    error_message TEXT
 );
 
 -- Trigger function to update 'updated_at' columns automatically
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
-    NEW.updated_at = CURRENT_TIMESTAMP;
-    RETURN NEW;
+   NEW.updated_at = CURRENT_TIMESTAMP;
+   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 

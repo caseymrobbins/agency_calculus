@@ -1,0 +1,103 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: agency_monitor_db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-agency_monitor}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      -./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    healthcheck:
+      test:
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  api:
+    build:
+      context:.
+      dockerfile: Dockerfile
+      target: api
+    container_name: agency_monitor_api
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-agency_monitor}
+      - SECRET_API_KEY=${SECRET_API_KEY:-a_very_secret_key_for_dev}
+      - MODEL_DIR=/app/models/
+    ports:
+      - "8000:8000"
+    volumes:
+      -./models:/app/models:ro
+      -./config:/app/config:ro
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context:.
+      dockerfile: Dockerfile
+      target: dashboard
+    container_name: agency_monitor_dashboard
+    depends_on:
+      - api
+    environment:
+      - API_URL=http://api:8000
+      - SECRET_API_KEY=${SECRET_API_KEY:-a_very_secret_key_for_dev}
+    ports:
+      - "8501:8501"
+    restart: unless-stopped
+
+  etl:
+    build:
+      context:.
+      dockerfile: Dockerfile
+      target: worker
+    container_name: agency_monitor_etl
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-agency_monitor}
+    volumes:
+      -./data:/app/data
+      -./config:/app/config
+      -./etl:/app/etl
+      -./api:/app/api
+    # This service is for on-demand runs, not a long-running process
+
+  trainer:
+    build:
+      context:.
+      dockerfile: Dockerfile
+      target: worker
+    container_name: agency_monitor_trainer
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-agency_monitor}
+    volumes:
+      -./models:/app/models
+      -./data:/app/data
+      -./config:/app/config
+      -./scripts:/app/scripts
+      -./ai:/app/ai
+      -./agency:/app/agency
+      -./api:/app/api
+    # This service is for on-demand runs, not a long-running process
+
+volumes:
+  postgres_data:
+
+networks:
+  default:
+    name: agency_monitor_network

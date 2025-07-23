@@ -1,11 +1,11 @@
 # ai/policy_scorer.py
 """
 NLP Policy Impact Scorer - Production Version
+
 Implements a zero-shot classification approach to analyze legislative text and
-estimate its thematic framing across the five agency domains. This version includes
-robust text segmentation and configurable analysis parameters.
+estimate its thematic framing across the five agency domains. This version
+includes robust text segmentation and configurable analysis parameters.
 """
-# --- Library Imports ---
 import re
 import logging
 from collections import defaultdict
@@ -15,15 +15,12 @@ import torch
 from datetime import datetime
 import json
 
-# --- Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- Global Initializer for Hugging Face Pipeline ---
 def initialize_classifier():
     """Initializes the zero-shot classifier, handling device placement."""
     try:
-        # Use GPU if available for significantly faster processing
         device = 0 if torch.cuda.is_available() else -1
         model_name = "facebook/bart-large-mnli"
         classifier = pipeline("zero-shot-classification", model=model_name, device=device)
@@ -33,7 +30,6 @@ def initialize_classifier():
         logger.error(f"Failed to load Hugging Face classifier: {e}")
         return None
 
-# Initialize classifier once on module load to avoid reloading the model on each call
 CLASSIFIER = initialize_classifier()
 
 CANDIDATE_LABELS = {
@@ -61,36 +57,32 @@ CANDIDATE_LABELS = {
 
 class PolicyScorer:
     """A zero-shot policy impact scorer for analyzing legislative text."""
+
     def __init__(self):
         if CLASSIFIER is None:
             raise RuntimeError("Classifier could not be initialized. Cannot create PolicyScorer.")
         self.classifier = CLASSIFIER
         self.candidate_labels = CANDIDATE_LABELS
         self.all_labels = [label for domain in self.candidate_labels.values() for label in domain.values()]
-        # FIX: Initialize scoring_history as an empty list
-        self.scoring_history = []
+        self.scoring_history = # FIX: Initialize as an empty list
 
     def _segment_text(self, text: str, max_chunk_length: int) -> List[str]:
         """Segments a long document into meaningful chunks within token limits."""
         text = re.sub(r'\s+', ' ', text).strip()
-        # Split by paragraphs as a robust baseline
         chunks = [p.strip() for p in text.split('\n\n') if p.strip()]
         
-        # Further split chunks that are too long
-        # FIX: Initialize final_chunks as an empty list
-        final_chunks = []
+        final_chunks = # FIX: Initialize as an empty list
         for chunk in chunks:
-            # Check if chunk exceeds the tokenizer's max length
             if len(self.classifier.tokenizer.tokenize(chunk)) > max_chunk_length:
-                # Simple split by sentences for oversized chunks
                 sentences = re.split(r'(?<=[.!?])\s+', chunk)
                 current_chunk = ""
                 for sentence in sentences:
-                    if len(self.classifier.tokenizer.tokenize(current_chunk + sentence)) <= max_chunk_length:
-                        current_chunk += sentence + " "
+                    if len(self.classifier.tokenizer.tokenize(current_chunk + " " + sentence)) <= max_chunk_length:
+                        current_chunk += " " + sentence
                     else:
-                        final_chunks.append(current_chunk.strip())
-                        current_chunk = sentence + " "
+                        if current_chunk:
+                            final_chunks.append(current_chunk.strip())
+                        current_chunk = sentence
                 if current_chunk:
                     final_chunks.append(current_chunk.strip())
             else:
@@ -99,13 +91,11 @@ class PolicyScorer:
         logger.info(f"Segmented text into {len(final_chunks)} chunks for analysis.")
         return final_chunks
 
-    def score_policy_text(self, text: str, policy_name: Optional[str] = "Untitled Policy",
-                          confidence_threshold: float = 0.5, normalization: str = 'density',
-                          max_chunk_length: int = 512, min_chunk_length: int = 25) -> Dict:
+    def score_policy_text(self, text: str, policy_name: Optional[str] = "Untitled Policy", confidence_threshold: float = 0.5, normalization: str = 'density', max_chunk_length: int = 512, min_chunk_length: int = 25) -> Dict:
         """Analyzes a policy document and provides a net impact score for each domain."""
         start_time = datetime.now()
-        # Filter out chunks that are too short to be meaningful
-        chunks = [c for c in self._segment_text(text, max_chunk_length) if len(c.split()) > min_chunk_length / 5]
+        
+        chunks = [c for c in self._segment_text(text, max_chunk_length) if len(c.split()) > min_chunk_length]
         if not chunks:
             return {'error': 'No valid text chunks found for analysis.'}
 
@@ -114,14 +104,12 @@ class PolicyScorer:
 
         for chunk in chunks:
             try:
-                # The model predicts the most likely label for the chunk
                 result = self.classifier(chunk, self.all_labels, multi_label=False)
-                top_label = result['labels'][0] # In single-label mode, access the first element
-                top_score = result['scores'][0]
+                top_label = result['labels'] # FIX: Access first element
+                top_score = result['scores'] # FIX: Access first element
 
                 if top_score >= confidence_threshold:
                     impactful_chunks_count += 1
-                    # Find which domain the top label belongs to and add its score
                     for domain, labels in self.candidate_labels.items():
                         if top_label == labels["positive"]:
                             domain_scores[domain]["positive"] += top_score
@@ -130,13 +118,12 @@ class PolicyScorer:
             except Exception as e:
                 logger.warning(f"Skipping chunk due to classification error: {e}")
 
-        # --- Calculate Net Impact Scores ---
         net_impact_scores = {}
-        # Determine the normalization factor based on the chosen strategy
+        normalizer = 1
         if normalization == 'magnitude' and impactful_chunks_count > 0:
             normalizer = impactful_chunks_count
-        else: # Default to 'density' normalization
-            normalizer = len(chunks) if chunks else 1
+        elif normalization == 'density' and chunks:
+            normalizer = len(chunks)
 
         for domain in self.candidate_labels.keys():
             scores = domain_scores[domain]
@@ -152,19 +139,13 @@ class PolicyScorer:
             'config': {'confidence_threshold': confidence_threshold, 'normalization': normalization}
         }
         self.scoring_history.append(analysis_record)
-        
         logger.info(f"Analysis for '{policy_name}' complete. Net scores: {net_impact_scores}")
         return analysis_record
 
-# --- Convenience function for API integration ---
 def score_policy_text(text: str, **kwargs) -> Dict:
-    """
-    Convenience function to create a PolicyScorer instance and score text.
-    This is the primary entry point for the API.
-    """
+    """Convenience function to create a PolicyScorer instance and score text."""
     try:
         scorer = PolicyScorer()
         return scorer.score_policy_text(text, **kwargs)
     except RuntimeError as e:
-        # This catches the case where the global CLASSIFIER failed to initialize
         return {'error': str(e)}

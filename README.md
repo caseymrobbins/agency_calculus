@@ -1,32 +1,141 @@
-# Agency Monitor
+Agency Monitor
+An early warning system for societal brittleness based on the Agency Calculus 4.3 framework. This system is designed to provide a quantitative measure of a society's resilience or fragility by analyzing its "choice space" across five key domains.
 
-Early warning system for societal collapse based on Agency Calculus 4.3
+Overview
+The Agency Monitor ingests a wide range of global indicators, processes them through the lens of Agency Calculus, and produces a Systemic Brittleness Score (B_sys) on a scale of 0-10. This score represents the ratio of a society's nominal wealth (e.g., GDP) to its actual agency or freedom of choice.
 
-## Overview
-This system monitors "agency" (choice space) across 5 domains:
-- Economic
-- Political  
-- Social
-- Health
-- Educational
+The core of the project is the Agency Calculus 4.3, a framework that defines and quantifies "agency" across five domains:
 
-## Current Status
-- Measuring US brittleness at 9+/10
-- Validating predictions with Haiti case study
-- Historical validation: Chile 1973, Iran 1979, Soviet Union 1991, Rwanda 1994
+Economic: The ability of individuals to participate in the economy and improve their financial well-being.
 
-## Quick Start
-```bash
+Political: The freedom to participate in the political process and hold power accountable.
+
+Social: The level of trust, cohesion, and freedom of association within a society.
+
+Health: Access to healthcare and the ability to make choices that lead to a healthy life.
+
+Educational: Access to quality education and the ability to acquire knowledge and skills.
+
+Current Status
+The system currently measures US brittleness at a concerning 9+/10.
+
+It is undergoing validation using a case study of Haiti.
+
+Historical validation has been performed against several known societal collapses, including 
+
+Chile (1973), Iran (1979), the Soviet Union (1991), and Rwanda (1994).
+
+Architecture
+The Agency Monitor is built with a modern Python-based architecture, designed for scalability and maintainability.
+
+ETL Layer: Scripts in the etl/ directory handle Extract, Transform, and Load operations. This includes 
+
+etl_world_bank.py for API-based data ingestion and etl_bulk.py for processing large datasets like V-Dem. A real-time aggregator (
+
+
+etl/realtime_aggregator.py) provides live data for the prediction engine.
+
+AI Layer: Housed in the ai/ directory, this layer contains the core machine learning models. A 
+
+HybridForecaster combines VARX and XGBoost models for time-series predictions , while a 
+
+BrittlenessPredictor uses XGBoost to calculate the final brittleness score.
+
+
+Agency Calculator: The agency/ directory contains the implementation of the Agency Calculus 4.3 framework, including the BrittlenessEngine which calculates the final score.
+
+
+
+API: A FastAPI backend provides a secure and efficient interface to the system's data and predictions.
+
+
+Dashboard: A Streamlit frontend offers a user-friendly interface for visualizing data and model outputs.
+
+
+Database: The system uses a PostgreSQL database, with the schema defined in database/schema.sql. It includes tables for countries, indicators, observations, predictions, and more.
+
+
+
+Installation and Setup
+Prerequisites
+Python 3.8+
+
+PostgreSQL
+
+An API key (for accessing the API)
+
+1. Clone the Repository
+Bash
+
+git clone <repository-url>
+cd agency-monitor
+2. Install Dependencies
+It's recommended to use a virtual environment.
+
+Bash
+
+python -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
-python api/main.py
-```
+3. Database Setup
+Create a PostgreSQL database:
 
-## Architecture
-- **ETL Layer**: Data collection from multiple sources
-- **AI Layer**: XGBoost models for predictions
-- **Agency Calculator**: Core brittleness calculations
-- **API**: FastAPI backend
-- **Dashboard**: Streamlit frontend
+SQL
 
-## Critical Timeline
-3-month deadline for Haiti validation
+CREATE DATABASE agency_monitor;
+Set the DATABASE_URL environment variable. You can create a .env file in the project root:
+
+DATABASE_URL="postgresql://<user>:<password>@<host>:<port>/agency_monitor"
+API_KEY="your_secret_api_key"
+Initialize the database schema:
+
+Bash
+
+python api/database.py
+This will create all the necessary tables as defined in 
+
+database/schema.sql.
+
+4. Data Ingestion
+You'll need to populate the database with data from various sources.
+
+Populate Metadata: This step populates the countries and indicators tables.
+
+Bash
+
+python etl/populate_metadata.py
+Run ETL Scripts:
+
+For World Bank data:
+
+Bash
+
+python etl/etl_world_bank.py
+For bulk data sources like V-Dem:
+
+Bash
+
+python etl/etl_bulk.py v_dem
+5. Training the Models
+To train the forecasting and brittleness models, run the training script:
+
+Bash
+
+python scripts/train_models.py
+This will create model artifacts in the 
+
+models/ directory, which are then used by the API.
+
+6. Run the Application
+You can run the FastAPI server and the Streamlit dashboard separately.
+
+Run the API:
+
+Bash
+
+uvicorn api.main:app --reload
+Run the Dashboard:
+
+Bash
+
+streamlit run dashboard.py
