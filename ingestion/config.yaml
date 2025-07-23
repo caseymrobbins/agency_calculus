@@ -46,9 +46,14 @@ v_dem:
   source_name: "V-Dem"
 
 freedom_house:
-  file_path: "data/raw/Freedom_in_the_World_2024.xlsx" # NOTE: Ensure this filename matches your download
+  file_path: "data/raw/Freedom_in_the_World_2024.xlsx"
   dataset_version: "FIW-2024"
   source_name: "Freedom-House"
+  # ADD THIS PART
+  indicators:
+    PR: FH_POLITICAL_RIGHTS
+    CL: FH_CIVIL_LIBERTIES
+
 
 undp:
   file_path: "data/raw/UNDP_Human_Development_Report_2023-24.csv" # NOTE: Ensure this filename matches your download

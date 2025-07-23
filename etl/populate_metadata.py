@@ -1,10 +1,4 @@
 # etl/populate_metadata.py
-"""
-Component: Metadata Population
-Purpose: This script is the first step in the ETL process. It populates the
-         'countries' and 'indicators' dimension tables from all available
-         sources to ensure data integrity before loading observations.
-"""
 import os
 import sys
 import yaml
@@ -14,16 +8,13 @@ import pycountry
 from typing import List, Dict, Any, Set
 from pathlib import Path
 
-# Add project root for module imports
 sys.path.append(str(Path(__file__).resolve().parents[1]))
-from api.database import get_db, bulk_upsert
+from api.database import get_db, bulk_upsert, Country, Indicator
 
-# --- Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 def load_config(config_path: str = 'ingestion/config.yaml') -> Dict[str, Any]:
-    """Loads the ingestion configuration."""
     try:
         with open(config_path, 'r') as f:
             return yaml.safe_load(f)
@@ -32,7 +23,6 @@ def load_config(config_path: str = 'ingestion/config.yaml') -> Dict[str, Any]:
         raise
 
 def get_vdem_countries(file_path: str) -> Set[str]:
-    """Extracts unique 3-letter country codes from the V-Dem dataset."""
     try:
         logger.info(f"Reading V-Dem countries from {file_path}...")
         df = pd.read_csv(file_path, usecols=['country_text_id'])
@@ -42,68 +32,48 @@ def get_vdem_countries(file_path: str) -> Set[str]:
         return set()
 
 def get_country_name(code: str) -> str:
-    """Finds the country name from a 2 or 3 letter code."""
     try:
-        country = pycountry.countries.get(alpha_3=code) or pycountry.countries.get(alpha_2=code)
+        country = pycountry.countries.get(alpha_3=code)
         return country.name if country else code
     except Exception:
         return code
 
 def run_metadata_population():
-    """Main function to populate dimension tables."""
     logger.info("--- Starting Metadata Population Pipeline ---")
     config = load_config()
-    
     all_country_codes = set()
     all_indicators = []
 
-    # 1. Gather all country codes
-    # From World Bank config
+    # Gather country codes
     wb_countries = config.get('world_bank', {}).get('countries', [])
     all_country_codes.update(wb_countries)
-    logger.info(f"Found {len(wb_countries)} country codes in World Bank config.")
-    
-    # From V-Dem CSV
     vdem_config = config.get('v_dem', {})
     if vdem_config and vdem_config.get('file_path'):
-        vdem_codes = get_vdem_countries(vdem_config['file_path'])
-        all_country_codes.update(vdem_codes)
-        logger.info(f"Found {len(vdem_codes)} unique country codes in V-Dem file.")
+        all_country_codes.update(get_vdem_countries(vdem_config['file_path']))
 
-    # 2. Prepare country data for database
-    countries_to_upsert = [
-        {'code': code, 'name': get_country_name(code)}
-        for code in all_country_codes if code
-    ]
-    logger.info(f"Total unique countries to synchronize: {len(countries_to_upsert)}")
-
-    # 3. Gather all indicators
-    for source, details in config.items():
-        if 'indicators' in details and isinstance(details['indicators'], dict):
-            for code, name in details['indicators'].items():
-                all_indicators.append({
-                    'code': code,
-                    'name': name,
-                    'source': source
-                })
-    logger.info(f"Total unique indicators to synchronize: {len(all_indicators)}")
+    # Prepare country data
+    countries_to_upsert = [{'code': code, 'name': get_country_name(code)} for code in all_country_codes if code]
     
-    # 4. Upsert to database
+    # Prepare indicator data
+    for source, details in config.items():
+        if 'indicators' in details and isinstance(details['indicators'], (dict, list)):
+            if isinstance(details['indicators'], dict): # Handle v_dem, freedom_house format
+                 for k, v in details['indicators'].items():
+                     all_indicators.append({'code': v, 'name': f"{source} - {k}", 'source': source, 'access_method': 'Bulk'})
+            else: # Handle world_bank format
+                for ind in details['indicators']:
+                    all_indicators.append({'code': ind['code'], 'name': ind['name'], 'source': 'world_bank', 'access_method': 'API'})
+
+    logger.info(f"Total unique countries to sync: {len(countries_to_upsert)}")
+    logger.info(f"Total unique indicators to sync: {len(all_indicators)}")
+
     with get_db() as db:
-        # Upsert Countries
         if countries_to_upsert:
-            logger.info("Synchronizing countries table...")
-            result_countries = bulk_upsert(db, 'countries', countries_to_upsert, ['code'])
-            logger.info(f"Countries table synchronized. Rows affected: {result_countries.get('affected_rows', 0)}")
-        
-        # Upsert Indicators
+            bulk_upsert(db, Country.__table__, countries_to_upsert, ['code'])
         if all_indicators:
-            logger.info("Synchronizing indicators table...")
-            result_indicators = bulk_upsert(db, 'indicators', all_indicators, ['code'])
-            logger.info(f"Indicators table synchronized. Rows affected: {result_indicators.get('affected_rows', 0)}")
+            bulk_upsert(db, Indicator.__table__, all_indicators, ['code'])
 
     logger.info("--- Metadata Population Finished Successfully ---")
-
 
 if __name__ == "__main__":
     run_metadata_population()

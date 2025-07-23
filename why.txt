@@ -1,0 +1,49 @@
+Why I Created This
+I created the Agency Monitor because I believe we are flying blind. We measure the health of our societies using outdated and often misleading economic indicators like GDP. A rising GDP can mask growing inequality, eroding freedoms, and a fraying social fabric. We see the signs of fragility all around us, but we lack a rigorous, quantitative way to understand and address it.
+
+This project is my attempt to build a better instrument panel for society. It's an effort to create an early warning system that can alert us to rising brittleness before it cascades into a full-blown crisis.
+
+Why I Made It Free
+The principles of Agency Calculus are rooted in the idea of shared freedom and open access to knowledge. To place this tool behind a paywall would be a betrayal of its core philosophy. Societal collapse is a threat that affects all of us, and the tools to understand and potentially mitigate it should be available to everyone—researchers, journalists, policymakers, and the public.
+
+This project is licensed under the GNU General Public License, Version 3. This ensures that it will remain free software, that anyone can share and change it, and that its benefits will be accessible to all.
+
+
+
+What I Am Hoping It Will Do
+My hope is that the Agency Monitor will serve as a catalyst for a more honest and data-driven conversation about the health of our societies. I hope it will be used to:
+
+Challenge conventional wisdom: To show that a high GDP does not automatically equate to a strong and healthy society.
+
+Identify hidden risks: To pinpoint the specific domains where agency is being eroded, allowing for targeted interventions.
+
+Empower policymakers and citizens: To provide a tool that can help in making more informed decisions that enhance, rather than diminish, societal agency.
+
+Foster a new kind of "civic science": Where data and analytical tools are used to hold power accountable and to build more resilient and free societies.
+
+This is not a crystal ball. It is a tool for thought, a way of looking at the world that prioritizes human agency. If it can help us to ask better questions and to see the cliff's edge before we go over it, then it will have served its purpose.
+
+
+A Tool for Asymmetric Accountability
+
+Some of you may have noticed the potential for this tool to become a powerful weapon against any societal system. If you haven't, let me spell out exactly how it is.
+
+This tool highlights a society's weak points. The Agency Monitor is an early warning system for societal collapse based on Agency Calculus 4.3. It can even figure out exactly how much pressure a pillar of agency would take before collapsing. This is why I have given it out freely—because it's the best shield against those who would use it as a weapon.
+
+The Agency Monitor is designed to be a tool of asymmetric accountability. It provides a quantitative basis for what many people feel intuitively: that things are becoming more fragile, that their choices are narrowing, and that the systems in power are becoming less responsive.
+
+Its power lies in its ability to expose the gap between a system's stated values and its actual impact on the agency of its people. The system doesn't attack people; it attacks falsehoods. In accordance with the Agency Calculus 4.3 'Bill of Rights for the Analyzed,' this project adheres to a radical transparency mandate. Its primary function is to give a voice to the data, to reveal the systemic effects of policies and actions that might otherwise go unnoticed.
+
+Therefore, the only systems that should view this tool as a threat are those that are actively, whether through incompetence or intent, eroding at society's agency. For systems that are genuinely working to increase the choice space of their people, the Agency Monitor should be a welcome diagnostic tool, helping them identify areas of weakness and build a more resilient and truly free society.
+
+
+On Universal Ethics and Apolitical Design
+
+It is crucial to understand that the Agency Monitor, by its very design, is apolitical. Its purpose is not to advocate for any specific political party, economic system, or ideology. Instead, its ethical foundation is based on a principle that we believe to be universal: the maximization of an individual's agency.
+
+Ultimately, the Agency Monitor is not concerned with whether a policy is left-wing or right-wing. It is only concerned with whether a policy demonstrably increases or decreases the agency of the population. This commitment to measurable, transparent, and ideologically flexible analysis is what makes the project's ethical framework both universal and apolitical.
+
+
+Finally about the paralles to Azomof
+
+Agency Calculus was designed to be a moral framework for AI, a metric for good and evil that was (at least in theory) quantifiable. Its predictive nature is just a testiment to the core principals.

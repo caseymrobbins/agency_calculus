@@ -1,0 +1,41 @@
+Agency Calculus 4.3 (AC4) is a theoretical framework and a set of mathematical tools designed to quantify the concept of "agency" within a societal context. "Agency," in this framework, is defined as the effective choice space available to individuals and groups. It's not just about theoretical freedoms, but about the practical ability to make and act upon choices that shape one's life.
+
+The core of AC4 is the 
+
+Systemic Brittleness score (B_sys), which is calculated as the ratio of a society's nominal wealth (like GDP) to its total agency (A_total).
+
+
+B 
+sys
+​
+ = 
+A 
+total
+​
+ 
+Nominal GDP
+​
+ 
+A high brittleness score suggests a society that may appear prosperous on the surface but is internally fragile because its wealth is not translating into real agency for its citizens. This creates a precarious situation where even minor shocks can lead to systemic collapse.
+
+AC4 also includes the concept of Agency Violation Magnitude (V_alpha), which quantifies the harm caused when one actor infringes upon the agency of another. This is calculated using the formula:
+
+V(α)=C×∣ΔA∣×D 
+amp
+​
+ 
+Where:
+
+C is an attack factor.
+
+∣
+DeltaA∣ is the change in agency.
+
+
+D_amp is a disparity amplifier, which accounts for the power difference between the perpetrator and the victim.
+
+
+
+The framework is designed to be 
+
+ideologically aware, allowing for analysis from different perspectives (e.g., Libertarian, Socialist, Communitarian) by adjusting the weights assigned to each of the five agency domains. This "Adversarial Weighting Protocol" is a key feature that promotes a more nuanced understanding of societal dynamics.

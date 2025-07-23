@@ -8,13 +8,14 @@ from typing import List, Dict, Any
 from dotenv import load_dotenv
 from sqlalchemy import (
     create_engine, Column, String, Integer, DateTime,
-    ForeignKey, Text, UniqueConstraint, Index, Numeric, CheckConstraint
+    ForeignKey, Text, UniqueConstraint, Numeric
 )
 from sqlalchemy.orm import sessionmaker, Session, declarative_base
 from sqlalchemy.dialects.postgresql import UUID, insert as pg_insert
+from sqlalchemy.schema import Table
 
 # --- Configuration ---
-load_dotenv() # Load environment variables from .env file
+load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL environment variable not set!")
@@ -36,7 +37,7 @@ class Indicator(Base):
     code = Column(String(50), primary_key=True)
     name = Column(String(255), nullable=False)
     source = Column(String(100))
-    # ... other fields
+    access_method = Column(String(10))
 
 class Observation(Base):
     __tablename__ = "observations"
@@ -52,11 +53,8 @@ class Observation(Base):
         UniqueConstraint('country_code', 'indicator_code', 'year', 'dataset_version', name='uq_observation'),
     )
 
-# --- Database Session Management ---
-
 @contextmanager
 def get_db() -> Session:
-    """Provide a transactional scope for database operations."""
     db = SessionLocal()
     try:
         yield db
@@ -66,17 +64,12 @@ def get_db() -> Session:
     finally:
         db.close()
 
-# --- High-Performance Database Functions ---
-
-def bulk_upsert(db: Session, table_name: str, data: List[Dict[str, Any]], index_elements: List[str]):
-    """Generic bulk upsert function."""
+def bulk_upsert(db: Session, table: Table, data: List[Dict[str, Any]], index_elements: List[str]):
+    """Generic bulk upsert function that accepts the actual table object."""
     if not data:
         return {"affected_rows": 0}
     
-    table = Base.metadata.tables[table_name]
     stmt = pg_insert(table).values(data)
-    
-    # Create the 'set_' dictionary for the ON CONFLICT clause
     update_cols = {
         col.name: getattr(stmt.excluded, col.name)
         for col in table.c
@@ -88,17 +81,16 @@ def bulk_upsert(db: Session, table_name: str, data: List[Dict[str, Any]], index_
         set_=update_cols
     )
     result = db.execute(final_stmt)
+    db.commit()
     return {"affected_rows": result.rowcount}
 
 
 def bulk_upsert_observations(db: Session, observations: List[Dict[str, Any]]):
     """Specific bulk upsert for the observations table."""
-    return bulk_upsert(db, 'observations', observations, ['country_code', 'indicator_code', 'year', 'dataset_version'])
+    return bulk_upsert(db, Observation.__table__, observations, ['country_code', 'indicator_code', 'year', 'dataset_version'])
 
 
-# --- Initialization Script ---
 def init_db():
-    """Initialize database with tables."""
     Base.metadata.create_all(bind=engine)
     print("Database tables created based on ORM models!")
 
