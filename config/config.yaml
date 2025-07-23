@@ -1,0 +1,86 @@
+# Unified Configuration for the Agency Monitor Project
+
+# --- Database Configuration ---
+# These should be set as environment variables in production for security
+# Example: export DATABASE_URL="postgresql://user:password@host:port/dbname"
+database:
+  url: "postgresql://postgres:postgres@localhost:5432/agency_monitor"
+
+# --- API Configuration ---
+# This should be set as an environment variable in production
+api:
+  secret_key: "a_very_secret_key_for_dev"
+  rate_limit: "100/minute"
+
+# --- Model Configuration ---
+models:
+  # Directory where trained model artifacts (.pkl files) are stored and loaded from
+  directory: "models/"
+  # Default parameters for the HybridForecaster
+  hybrid_forecaster:
+    max_lags: 8
+    xgb_params:
+      n_estimators: 300
+      max_depth: 6
+      learning_rate: 0.05
+      subsample: 0.8
+      colsample_bytree: 0.7 # Helps with correlated features
+      gamma: 0.1
+      reg_alpha: 0.1
+      reg_lambda: 1.0
+      random_state: 42
+      n_jobs: -1
+
+# --- ETL Ingestion Configuration ---
+# Defines target countries and indicators for various data sources
+ingestion:
+  # Target countries using their ISO 3166-1 alpha-3 codes
+  target_countries:
+    - USA
+    - HTI
+
+  # World Bank API Ingestion (Task 1.2)
+  world_bank:
+    indicators:
+      # Economic
+      - { code: "NY.GDP.MKTP.CD", name: "GDP (current US$)" }
+      - { code: "NY.GDP.PCAP.CD", name: "GDP per capita (current US$)" }
+      - { code: "SL.UEM.TOTL.ZS", name: "Unemployment, total (% of total labor force)" }
+      - { code: "SI.POV.GINI", name: "Gini index" }
+      # Health
+      - { code: "SP.DYN.LE00.IN", name: "Life expectancy at birth, total (years)" }
+      - { code: "SH.XPD.GHED.GD.ZS", name: "Domestic general government health expenditure (% of GDP)" }
+      # Educational
+      - { code: "SE.ADT.LITR.ZS", name: "Literacy rate, adult total (% of people ages 15 and above)" }
+      - { code: "SE.XPD.TOTL.GD.ZS", name: "Government expenditure on education, total (% of GDP)" }
+
+  # Bulk Data Ingestion (Task 1.3)
+  v_dem:
+    file_path: "data/raw/V-Dem-CY-Full+Others-v15.csv"
+    dataset_version: "V-Dem-v15"
+    source_name: "V-Dem"
+    indicators_to_extract:
+      - "v2eltrnout" # Voter Turnout
+      - "v2cacamps"  # Political polarization
+      - "v2psoppaut" # Opposition parties autonomy
+
+  freedom_house:
+    file_path: "data/raw/Freedom_in_the_World_2024.xlsx"
+    dataset_version: "FIW-2024"
+    source_name: "Freedom House"
+    indicator_code: "political_freedom_index"
+    indicator_name: "Political Freedom Index (Freedom House)"
+
+  undp:
+    file_path: "data/raw/UNDP_Human_Development_Report_2023-24.csv"
+    dataset_version: "UNDP-HDR-2024"
+    source_name: "UNDP"
+    indicator_code: "mean_years_of_schooling"
+    indicator_name: "Mean years of schooling"
+
+# --- NLP Policy Scorer Configuration ---
+policy_scorer:
+  model: "facebook/bart-large-mnli"
+  confidence_threshold: 0.50
+  max_chunk_length: 512 # Max tokens for the BART model
+  min_chunk_length: 50  # Minimum meaningful text chunk size

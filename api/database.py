@@ -1,86 +1,56 @@
-"""
-Database models and connection management for Agency Monitor
-Using SQLAlchemy ORM for PostgreSQL interaction
-"""
-
+# api/database.py
 import os
-from datetime import datetime
-from typing import List, Optional, Dict, Any
-from contextlib import contextmanager
 import uuid
+from datetime import datetime
+from contextlib import contextmanager
+from typing import List, Dict, Any
 
+from dotenv import load_dotenv
 from sqlalchemy import (
     create_engine, Column, String, Integer, DateTime,
-    ForeignKey, Text, Date, UniqueConstraint,
-    Index, CheckConstraint, Numeric
+    ForeignKey, Text, UniqueConstraint, Index, Numeric, CheckConstraint
 )
-from sqlalchemy.orm import sessionmaker, Session, relationship, declarative_base
+from sqlalchemy.orm import sessionmaker, Session, declarative_base
 from sqlalchemy.dialects.postgresql import UUID, insert as pg_insert
 
 # --- Configuration ---
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost/agency_monitor")
+load_dotenv() # Load environment variables from .env file
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable not set!")
+
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# --- Database Models (Aligned with create_schema.sql) ---
+# --- Database Models ---
 
 class Country(Base):
     __tablename__ = "countries"
-    country_code = Column(String(3), primary_key=True)
-    country_name = Column(String(100), nullable=False)
+    code = Column(String(3), primary_key=True)
+    name = Column(String(100), nullable=False)
     region = Column(String(50))
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class Indicator(Base):
     __tablename__ = "indicators"
-    indicator_code = Column(String(50), primary_key=True)
-    indicator_name = Column(String(255), nullable=False)
-    description = Column(Text)
-    source = Column(String(100), nullable=False)
-    access_method = Column(String(10), nullable=False)
-    domain = Column(String(20))
-    unit_of_measure = Column(String(50))
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    __table_args__ = (
-        CheckConstraint(access_method.in_(['API', 'Bulk'])),
-        CheckConstraint(domain.in_(['economic', 'political', 'social', 'health', 'educational', 'composite'])),
-    )
+    code = Column(String(50), primary_key=True)
+    name = Column(String(255), nullable=False)
+    source = Column(String(100))
+    # ... other fields
 
 class Observation(Base):
     __tablename__ = "observations"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    country_code = Column(String(3), ForeignKey("countries.country_code"), nullable=False)
-    indicator_code = Column(String(50), ForeignKey("indicators.indicator_code"), nullable=False)
+    country_code = Column(String(3), ForeignKey("countries.code"), nullable=False)
+    indicator_code = Column(String(50), ForeignKey("indicators.code"), nullable=False)
     year = Column(Integer, nullable=False)
-    value = Column(Numeric)
-    dataset_version = Column(String(50), nullable=False)
-    data_quality = Column(Numeric)
+    value = Column(Numeric, nullable=False)
+    dataset_version = Column(String(50))
     notes = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     __table_args__ = (
-        UniqueConstraint('country_code', 'indicator_code', 'year', 'dataset_version', name='unique_observation'),
-        Index('idx_observations_country_year', 'country_code', 'year'),
+        UniqueConstraint('country_code', 'indicator_code', 'year', 'dataset_version', name='uq_observation'),
     )
-
-class AgencyScore(Base):
-    __tablename__ = "agency_scores"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    country_code = Column(String(3), ForeignKey("countries.country_code"), nullable=False)
-    year = Column(Integer, nullable=False)
-    indicator_code = Column(String(50), ForeignKey("indicators.indicator_code"), nullable=False)
-    score = Column(Numeric)
-    calculation_version = Column(String(50), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    __table_args__ = (
-        UniqueConstraint('country_code', 'indicator_code', 'year', 'calculation_version', name='unique_agency_score'),
-    )
-
-# ... other models like BrittlenessPrediction, IQANote, etc. would follow the same pattern ...
 
 # --- Database Session Management ---
 
@@ -98,36 +68,37 @@ def get_db() -> Session:
 
 # --- High-Performance Database Functions ---
 
-def bulk_upsert_observations(db: Session, observations: List[Dict[str, Any]]):
-    """
-    Performs a high-performance bulk insert/update for observations using
-    PostgreSQL's ON CONFLICT DO UPDATE feature.
-    """
-    if not observations:
-        return {"inserted": 0, "updated": 0}
-
-    stmt = pg_insert(Observation).values(observations)
+def bulk_upsert(db: Session, table_name: str, data: List[Dict[str, Any]], index_elements: List[str]):
+    """Generic bulk upsert function."""
+    if not data:
+        return {"affected_rows": 0}
     
-    update_dict = {
-        'value': stmt.excluded.value,
-        'data_quality': stmt.excluded.data_quality,
-        'notes': stmt.excluded.notes,
-        'updated_at': datetime.utcnow(),
+    table = Base.metadata.tables[table_name]
+    stmt = pg_insert(table).values(data)
+    
+    # Create the 'set_' dictionary for the ON CONFLICT clause
+    update_cols = {
+        col.name: getattr(stmt.excluded, col.name)
+        for col in table.c
+        if col.name not in index_elements and not col.primary_key
     }
     
     final_stmt = stmt.on_conflict_do_update(
-        index_elements=['country_code', 'indicator_code', 'year', 'dataset_version'],
-        set_=update_dict
+        index_elements=index_elements,
+        set_=update_cols
     )
-    
     result = db.execute(final_stmt)
-    db.commit() # Commit the transaction
-    # Note: result.rowcount doesn't distinguish between inserts and updates, it's the total affected rows.
     return {"affected_rows": result.rowcount}
+
+
+def bulk_upsert_observations(db: Session, observations: List[Dict[str, Any]]):
+    """Specific bulk upsert for the observations table."""
+    return bulk_upsert(db, 'observations', observations, ['country_code', 'indicator_code', 'year', 'dataset_version'])
+
 
 # --- Initialization Script ---
 def init_db():
-    """Initialize database with tables. Use with caution."""
+    """Initialize database with tables."""
     Base.metadata.create_all(bind=engine)
     print("Database tables created based on ORM models!")
 

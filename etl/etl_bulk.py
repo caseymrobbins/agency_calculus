@@ -1,126 +1,111 @@
 # etl/etl_bulk.py
-"""
-Component: ETL Pipeline for Bulk Data (Refactored)
-Purpose: Ingests large, versioned datasets from local files (e.g., V-Dem),
-         parses them, and loads the data into the database using the
-         high-performance SQLAlchemy ORM layer.
-Inputs: A configuration file (etl_config.yaml) specifying file paths and versions.
-Outputs: Populates the `observations` table in the PostgreSQL database.
-Integration: Uses the session management and bulk upsert functions from `api.database`.
-"""
-
 import os
 import sys
 import logging
-import argparse
-from datetime import datetime
+import yaml
+import pandas as pd
+from typing import List, Dict, Any
+from pathlib import Path
 
-# Add project root to path to allow imports from other directories
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# --- New Imports ---
-# Import the SQLAlchemy-based functions and YAML loader
+# Add project root for module imports
+sys.path.append(str(Path(__file__).resolve().parents[1]))
 from api.database import get_db, bulk_upsert_observations
-from etl.etl_world_bank import load_config as load_main_config, log_ingestion_status # Re-using these helpers
-
-# --- Parser Imports ---
-# Modular parsers for different bulk data sources
-from etl.parsers.vdem_parser import parse_vdem_data
 
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-
-def get_parser(source_name: str):
-    """
-    Returns the appropriate parser function based on the source name.
-    This makes the script modular and easy to extend for new bulk sources.
-    """
-    if source_name.lower() == 'v-dem':
-        return parse_vdem_data
-    # To add a new source (e.g., Freedom House):
-    # 1. Create a new parser in `etl/parsers/freedom_house_parser.py`
-    # 2. Add the import and an `elif` condition here.
-    # elif source_name.lower() == 'freedom-house':
-    #     return parse_freedom_house_data
-    else:
-        raise NotImplementedError(f"No parser implemented for source: {source_name}")
-
-
-def main(source_to_ingest: str):
-    """
-    Main function to orchestrate the bulk data ingestion process for a given source.
-    """
-    logger.info(f"--- Starting Bulk Data Ingestion for: {source_to_ingest} ---")
-    log_id = None
-
+def load_config(config_path: str = 'ingestion/config.yaml') -> dict:
+    """Loads the ingestion configuration from the YAML file."""
     try:
-        # The get_db context manager handles our session and transactions
+        with open(config_path, 'r') as f:
+            return yaml.safe_load(f)
+    except Exception as e:
+        logger.critical(f"FATAL: Could not load config from {config_path}: {e}")
+        raise
+
+def process_vdem_data(file_path: str, indicators_map: Dict[str, str]) -> List[Dict[str, Any]]:
+    """Processes the V-Dem dataset to extract relevant political agency indicators."""
+    logger.info(f"Processing V-Dem data from {file_path}...")
+    try:
+        df = pd.read_csv(file_path, low_memory=False)
+        
+        # Select and rename columns
+        df = df[['country_text_id', 'year'] + list(indicators_map.keys())]
+        df.rename(columns={'country_text_id': 'country_code'}, inplace=True)
+        
+        # Melt dataframe to long format
+        df_long = df.melt(
+            id_vars=['country_code', 'year'],
+            var_name='indicator_code',
+            value_name='value'
+        )
+        df_long.dropna(subset=['value'], inplace=True)
+        return df_long.to_dict('records')
+    except Exception as e:
+        logger.error(f"Failed to process V-Dem file: {e}", exc_info=True)
+        return []
+
+# Placeholder functions for other data sources
+def process_freedom_house_data(file_path: str) -> List[Dict[str, Any]]:
+    logger.warning(f"Processing for Freedom House at {file_path} is not yet implemented.")
+    return []
+
+def process_undp_data(file_path: str) -> List[Dict[str, Any]]:
+    logger.warning(f"Processing for UNDP at {file_path} is not yet implemented.")
+    return []
+
+def run_bulk_ingestion(source_key: str):
+    """Main orchestrator for a single bulk data source."""
+    logger.info(f"--- Starting Bulk Ingestion for source: {source_key} ---")
+    
+    try:
+        config = load_config()
+        source_config = config.get(source_key)
+        if not source_config:
+            raise ValueError(f"Source '{source_key}' not found in ingestion/config.yaml")
+
+        file_path = source_config.get('file_path')
+        dataset_version = source_config.get('dataset_version', '1.0')
+        indicators = source_config.get('indicators', {})
+        
+        observations = []
+        if source_key == 'v_dem':
+            observations = process_vdem_data(file_path, indicators)
+        elif source_key == 'freedom_house':
+            # observations = process_freedom_house_data(file_path)
+            pass
+        elif source_key == 'undp':
+            # observations = process_undp_data(file_path)
+            pass
+        else:
+            logger.error(f"No processor found for source: {source_key}")
+            return
+
+        if not observations:
+            logger.warning(f"No observations processed for source: {source_key}. Exiting.")
+            return
+            
+        for obs in observations:
+            obs['dataset_version'] = dataset_version
+            obs['notes'] = f"Data sourced from {source_key} file: {os.path.basename(file_path)}"
+
+        logger.info(f"Preparing to upsert {len(observations)} observations for {source_key}.")
         with get_db() as db:
-            from sqlalchemy import text # Import text for raw SQL
-            
-            # Load the master configuration file
-            config = load_main_config('config/etl_config.yaml')
-            
-            # Get the specific configuration for the source we are ingesting
-            source_config_key = source_to_ingest.lower().replace('-', '_')
-            source_config = config.get(source_config_key)
+            result = bulk_upsert_observations(db, observations)
+            logger.info(f"Database upsert complete. Rows affected: {result.get('affected_rows', 'N/A')}")
 
-            if not source_config:
-                raise ValueError(f"No configuration found for source '{source_to_ingest}' in etl_config.yaml")
-
-            file_path = source_config['file_path']
-            dataset_version = source_config['dataset_version']
-            source_name = source_config['source_name']
-            
-            # Start ingestion log
-            log_result = db.execute(
-                text("INSERT INTO ingestion_logs (source, access_method, dataset_version, status) VALUES (:source, :access, :version, :status) RETURNING id;"),
-                {'source': source_name, 'access': 'Bulk', 'version': dataset_version, 'status': 'RUNNING'}
-            ).fetchone()
-            log_id = log_result[0]
-            db.commit()
-
-            # Get the correct parser function for this source
-            parser_func = get_parser(source_name)
-
-            # --- Parsing ---
-            # Parse the entire data file into a list of observation dictionaries
-            observations = parser_func(file_path)
-
-            # --- Database Loading ---
-            # Add the dataset_version and notes to each observation before loading
-            notes = f"Data sourced from {source_name} bulk file, version {dataset_version}"
-            for obs in observations:
-                obs['dataset_version'] = dataset_version
-                obs['notes'] = notes
-            
-            # Perform a single bulk upsert for maximum efficiency
-            if observations:
-                logger.info(f"Upserting {len(observations)} total records from {source_name} into the database...")
-                result = bulk_upsert_observations(db, observations)
-                total_processed = result.get("affected_rows", 0)
-                logger.info(f"Bulk upsert complete. {total_processed} rows affected.")
-            else:
-                total_processed = 0
-
-            # Log the successful completion
-            log_ingestion_status(db, log_id, 'SUCCESS', records_processed=total_processed)
-            db.commit()
-            logger.info(f"Pipeline finished successfully. Total records affected: {total_processed}.")
+        logger.info(f"--- Bulk ingestion for {source_key} finished successfully. ---")
 
     except Exception as e:
-        logger.error(f"A critical error occurred: {e}", exc_info=True)
-        if log_id:
-            # Log the failure status to the database
-            with get_db() as db_fail:
-                log_ingestion_status(db_fail, log_id, 'FAILURE', error_message=str(e))
-                db_fail.commit()
+        logger.critical(f"A critical error occurred during bulk ingestion for {source_key}: {e}", exc_info=True)
+        raise
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run a bulk data ingestion pipeline for a specific source.")
-    parser.add_argument("source", type=str, help="The name of the data source to ingest (e.g., 'v-dem'). Must match a key in etl_config.yaml.")
-    args = parser.parse_args()
+    if len(sys.argv) < 2:
+        logger.error("Usage: python -m etl.etl_bulk <source_key>")
+        logger.error("Example: python -m etl.etl_bulk v_dem")
+        sys.exit(1)
     
-    main(args.source)
+    source_to_process = sys.argv[1]
+    run_bulk_ingestion(source_to_process)

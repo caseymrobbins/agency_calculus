@@ -1,0 +1,56 @@
+# Configuration for ETL ingestion scripts.
+# This file defines target countries and indicators for various data sources.
+
+# Section for the World Bank API Ingestion (Task 1.2)
+world_bank:
+  # [cite_start]Target countries using their ISO 3166-1 alpha-3 codes. [cite: 227]
+  # [cite_start]As per the validation plan, we start with USA and Haiti. [cite: 227]
+  countries:
+    - USA
+    - HTI
+
+  # [cite_start]World Bank indicators identified in the data sourcing research document. [cite: 229]
+  # [cite_start]These cover the Economic, Health, and Educational domains. [cite: 229]
+  indicators:
+    # Economic Agency Indicators
+    - code: NY.GDP.MKTP.CD
+      name: "GDP (current US$)"
+    - code: NY.GDP.PCAP.CD
+      name: "GDP per capita (current US$)"
+    - code: SL.UEM.TOTL.ZS
+      name: "Unemployment, total (% of total labor force) (modeled ILO estimate)"
+    - code: SI.POV.GINI
+      name: "Gini index"
+
+    # Health Agency Indicators
+    - code: SP.DYN.LE00.IN
+      name: "Life expectancy at birth, total (years)"
+    - code: SP.DYN.IMRT.IN
+      name: "Mortality rate, infant (per 1,000 live births)"
+    - code: SH.XPD.GHED.GD.ZS
+      name: "Domestic general government health expenditure (% of GDP)"
+
+    # Educational Agency Indicators
+    - code: SE.ADT.LITR.ZS
+      name: "Literacy rate, adult total (% of people ages 15 and above)"
+    - code: SE.XPD.TOTL.GD.ZS
+      name: "Government expenditure on education, total (% of GDP)"
+
+# [cite_start]Section for Bulk Data Ingestion (Task 1.3) [cite: 231]
+v_dem:
+  # [cite_start]Path to the raw CSV file within our data folder [cite: 231]
+  file_path: "data/raw/V-Dem-CY-Full+Others-v15.csv"
+  # [cite_start]The version we will tag this data with in the database [cite: 231]
+  dataset_version: "V-Dem-v15"
+  # [cite_start]The specific source name for logging [cite: 231]
+  source_name: "V-Dem"
+
+freedom_house:
+  file_path: "data/raw/Freedom_in_the_World_2024.xlsx" # NOTE: Ensure this filename matches your download
+  dataset_version: "FIW-2024"
+  source_name: "Freedom-House"
+
+undp:
+  file_path: "data/raw/UNDP_Human_Development_Report_2023-24.csv" # NOTE: Ensure this filename matches your download
+  dataset_version: "UNDP-HDR-2024"
+  source_name: "UNDP"

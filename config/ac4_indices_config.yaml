@@ -1,0 +1,30 @@
+## File: config/ac4_indices_config.yaml
+
+# Configuration for the AC4 Abstract Indices Processor
+# This file centralizes all parameters to make the script robust and easy to update.
+
+vdem_columns:
+  country: 'country_code'
+  year: 'year'
+  # Precise column names from the V-Dem dataset to avoid ambiguity
+  polarization: 'v2cacamps'
+  bipartisanship: 'v2psoppaut'
+
+wvs_columns:
+  country: 'country_code'
+  year: 'year'
+  trust: 'generalized_trust'
+
+parameters:
+  polarization:
+    # The theoretical maximum value of the 'v2cacamps' indicator [cite: 2631]
+    max_value: 4.0
+  bipartisanship:
+    # Fixed historical min/max from V-Dem documentation for stable, reproducible normalization
+    historical_min: -4.0
+    historical_max: 4.0
+    no_variation_default: 50.0
+  social_trust:
+    # WVS coding for the generalized trust question [cite: 2655]
+    trust_value: 1
+    no_trust_value: 2
