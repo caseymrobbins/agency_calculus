@@ -1,12 +1,3 @@
-python
-
-Collapse
-
-Wrap
-
-Run
-
-Copy
 import pandas as pd
 import numpy as np
 import warnings
@@ -65,6 +56,9 @@ class HybridForecaster:
         max_diff = 2
         diff_order = 0
         temp_series = series.dropna()
+        if len(temp_series) < 2 or temp_series.std() < 1e-10:
+            logger.warning(f"'{name}' is constant or too short. Treating as stationary with diff_order=0.")
+            return True, 0
         while diff_order <= max_diff:
             result = adfuller(temp_series)
             p_value = result[1]
@@ -82,6 +76,7 @@ class HybridForecaster:
         if len(endog_df) < self.max_lags + 2:
             logger.warning("Data too short for cointegration test. Skipping.")
             return False, 0
+        endog_df = endog_df.astype(float)  # Ensure numeric
         result = coint_johansen(endog_df, det_order=0, k_ar_diff=1)
         trace_stat = result.lr1
         critical_values = result.cvt[:, 1]  # 5% critical values
@@ -92,6 +87,9 @@ class HybridForecaster:
 
     def _select_lag_order(self, endog_df: pd.DataFrame, exog_df: Optional[pd.DataFrame]) -> int:
         """Selects the optimal VAR lag order using BIC."""
+        endog_df = endog_df.astype(float)
+        if exog_df is not None:
+            exog_df = exog_df.astype(float)
         temp_model = VAR(endog_df, exog=exog_df)
         try:
             lag_selection = temp_model.select_order(maxlags=self.max_lags)

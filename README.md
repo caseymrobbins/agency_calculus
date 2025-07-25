@@ -139,3 +139,39 @@ Run the Dashboard:
 Bash
 
 streamlit run dashboard.py
+
+
+Overview of the Repository
+The GitHub repository at https://github.com/caseymrobbins/agency_calculus/ is owned by Casey M. Robbins (author of Agency Calculus 4.3 framework). It implements "Agency Monitor," a practical software system based on AC4.3 principles for measuring societal health through "agency flow" and systemic brittleness (B_sys). The project quantifies risks like inequality, polarization, and institutional fragility across domains (economic, political, social, health, educational), producing a brittleness score (0-10 scale). It's described as a tool to diagnose societal resilience, with historical validation (e.g., against collapses like Chile 1973 or Rwanda 1994) and current US analysis showing high brittleness (9+/10).github.com
+
+Project Structure and Files
+The structure is modular and production-oriented, divided into directories for data processing, models, API, and frontend. 
+
+etl/: Data ingestion layer.
+etl_world_bank.py: Fetches indicators from World Bank API (e.g., GDP, inequality metrics).
+etl_bulk.py: Handles large datasets like V-Dem (Varieties of Democracy) for political/social scores.
+realtime_aggregator.py: Pulls live data for predictions (e.g., news/economic feeds).
+ai/: Machine learning core.
+HybridForecaster: Time-series model (VARX/XGBoost hybrid) for trend forecasting—matches your code from earlier chats.
+BrittlenessPredictor: XGBoost-based final scorer for B_sys, integrating agency calculations.
+agency/: AC4.3 implementation.
+BrittlenessEngine: Computes B_sys = Nominal_GDP / Total_Agency (scaled 0-10); includes risk levels (LOW/MEDIUM/HIGH/CRITICAL) and percentile calibration.
+api/: Backend service.
+main.py: FastAPI app entry (run via uvicorn api.main:app).
+database.py: Sets up PostgreSQL schema.
+database/:
+schema.sql: Defines tables (e.g., countries, indicators, observations, predictions)—stores agency scores, GDP, brittleness results.
+models/: Stores trained artifacts (e.g., pickled XGBoost models).
+scripts/:
+train_models.py: Trains forecaster/predictor, saves to models/.
+dashboard.py: Streamlit UI for visualizations (e.g., brittleness dashboards, forecasts).
+requirements.txt: Dependencies (inferred: pandas, numpy, statsmodels, xgboost, shap, fastapi, streamlit, psycopg2 for DB).
+
+Key Features and Tie to AC4.3
+Core Implementation: Directly embodies AC4.3—calculates Total Agency as weighted sum (e.g., economic:0.25, political:0.20 per "framework_average"); Violation Magnitude via V(a)=C*|ΔA|*Damp (with k sensitivity). Brittleness as GDP/Agency proxy measures "fragility."
+Ideological Perspectives: Supports "framework_average," "libertarian," etc., with custom weights—enables adversarial comparisons (e.g., summary stats on brittleness variance).
+Data-Driven: ETL from sources like World Bank/V-Dem for real-time/historical agency metrics.
+Predictive: HybridForecaster for trends (e.g., Gini forecasts); BrittlenessPredictor for scores.
+API/Dashboard: Process JSON requests (e.g., agency_scores + GDP → brittleness/violation dict); visualize via Streamlit.
+Validation: Tests against historical collapses;
+This repo turns AC4.3 from theory (PDFs) into software—great for simulations like US forecasts 

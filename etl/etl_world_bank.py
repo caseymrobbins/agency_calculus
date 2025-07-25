@@ -1,7 +1,3 @@
-"""
-ETL script for World Bank data ingestion.
-Fetches indicators via wbdata API and upserts into the database.
-"""
 import os
 import sys
 import logging
@@ -10,15 +6,18 @@ import yaml
 from tenacity import retry, stop_after_attempt, wait_exponential
 from typing import List, Dict, Any, Optional
 from pathlib import Path
-import pandas as pd
-import pandera as pa
+import pandera.pandas as pa  # Updated import
 from pandera import Column, Check, DataFrameSchema
+import pandas as pd
+import requests
+import time
+import pycountry
 
 # Add project root to path to allow module imports
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(PROJECT_ROOT))
 
-from src.api.database import get_db, bulk_upsert_observations
+from api.database import get_db, bulk_upsert_observations
 
 # --- Configuration ---
 logging.basicConfig(
@@ -51,13 +50,21 @@ def create_pandera_schema(indicators_list: List[Dict[str, Any]]) -> DataFrameSch
         'indicator_code': Column(str, nullable=False),
         'value': Column(float, nullable=False)
     }
-    # Add per-indicator checks (e.g., value_range from config)
     for ind in indicators_list:
         if 'value_range' in ind:
-            min_val = ind['value_range'].get('min', float('-inf'))
-            max_val = ind['value_range'].get('max', float('inf'))
+            min_val = float(ind['value_range'].get('min', float('-inf')))
+            max_val = float(ind['value_range'].get('max', float('inf')))
             columns['value'].checks.append(Check.in_range(min_val, max_val))
     return DataFrameSchema(columns)
+
+def iso3_to_iso2(iso3: str) -> Optional[str]:
+    """Converts ISO3 country code to ISO2 using pycountry."""
+    country = pycountry.countries.get(alpha_3=iso3)
+    if country:
+        return country.alpha_2
+    else:
+        logger.warning(f"Invalid ISO3 code: {iso3}")
+        return None
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 def fetch_world_bank_data_batch(
@@ -65,58 +72,52 @@ def fetch_world_bank_data_batch(
     indicators: Dict[str, str],
     start_year: int = 1960,
     end_year: Optional[int] = None,
-    batch_size: int = 50  # Batch countries to avoid API overload
+    batch_size: int = 20
 ) -> List[Dict]:
-    """Fetches time-series data for multiple countries and indicators in batches."""
-    logger.info(f"Starting batch fetch for {len(country_codes)} countries and {len(indicators)} indicators.")
-    end_year = end_year or datetime.now().year
-    data_date_range = (datetime(start_year, 1, 1), datetime(end_year, 12, 31))
-    
-    import wbdata
-    wbdata.cache.CACHE_BACKEND = None  # Disable cache for fresh data
-    
+    """Fetches time-series data for multiple countries and indicators using direct API calls."""
+    logger.info(f"Starting direct API fetch for {len(country_codes)} countries and {len(indicators)} indicators.")
+    current_year = datetime.now().year
+    end_year = end_year or (current_year - 1)
+    end_year = min(end_year, current_year - 1)
     all_records = []
     dropped = 0
-    for i in range(0, len(country_codes), batch_size):
-        batch_countries = country_codes[i:i + batch_size]
-        logger.info(f"Fetching batch {i//batch_size + 1}: {batch_countries}")
-        try:
-            df = wbdata.get_dataframe(indicators, country=batch_countries, date=data_date_range)
-            df.reset_index(inplace=True)
-            
-            df_long = df.melt(id_vars=['country', 'date'], var_name='indicator_name', value_name='value')
-            prev_len = len(df_long)
-            df_long.dropna(subset=['value'], inplace=True)
-            dropped += prev_len - len(df_long)
-            
-            df_long.rename(columns={'date': 'year', 'country': 'country_name'}, inplace=True)
+    base_url = "https://api.worldbank.org/v2/country/{country}/indicator/{ind}?date={start}:{end}&format=json&per_page=1000"
 
-            # Dynamic country name to code from pycountry (no hardcoded map)
-            df_long['country_code'] = df_long['country_name'].apply(country_name_to_code)
-            df_long = df_long.dropna(subset=['country_code'])
-
-            # Map name to code (indicators is {code: name}, so reverse)
-            name_to_code_map = {v: k for k, v in indicators.items()}
-            df_long['indicator_code'] = df_long['indicator_name'].map(name_to_code_map)
-            
-            df_long['year'] = pd.to_numeric(df_long['year'], errors='coerce')
-            
-            all_records.extend(df_long[['country_code', 'year', 'indicator_code', 'value']].to_dict('records'))
-        except Exception as e:
-            logger.error(f"Batch fetch failed for {batch_countries}: {e}", exc_info=True)
+    for ind_code, ind_name in indicators.items():
+        for i in range(0, len(country_codes), batch_size):
+            batch_countries = country_codes[i:i + batch_size]
+            logger.info(f"Fetching {ind_name} ({ind_code}) for batch {i//batch_size + 1}: {batch_countries}")
+            for country in batch_countries:
+                country_iso2 = iso3_to_iso2(country)
+                if not country_iso2:
+                    continue
+                url = base_url.format(country=country_iso2, ind=ind_code, start=start_year, end=end_year)
+                try:
+                    response = requests.get(url)
+                    response.raise_for_status()
+                    data = response.json()
+                    if len(data) < 2 or not isinstance(data[1], list):
+                        logger.warning(f"No data for {country}/{ind_code}")
+                        continue
+                    entries = data[1]
+                    for entry in entries:
+                        if entry['value'] is not None:
+                            all_records.append({
+                                'country_code': entry['countryiso3code'],
+                                'year': int(entry['date']),
+                                'indicator_code': ind_code,
+                                'value': float(entry['value'])
+                            })
+                        else:
+                            dropped += 1
+                    time.sleep(0.5)
+                except requests.exceptions.RequestException as e:
+                    logger.error(f"API fetch failed for {country}/{ind_code}: {e}")
     
     if dropped > 0:
-        logger.warning(f"Dropped {dropped} rows due to NaN values.")
+        logger.warning(f"Dropped {dropped} entries due to null values.")
     logger.info(f"Successfully fetched and processed {len(all_records)} records from World Bank API.")
     return all_records
-
-def country_name_to_code(name: str) -> Optional[str]:
-    """Converts country name to 3-letter ISO code using pycountry."""
-    try:
-        return pycountry.countries.lookup(name).alpha_3
-    except LookupError:
-        logger.warning(f"Country name not found: {name}")
-        return None
 
 def run_ingestion(config_path: str = 'ingestion/config.yaml', dry_run: bool = False):
     """Main function to orchestrate the World Bank data ingestion pipeline."""
@@ -145,13 +146,16 @@ def run_ingestion(config_path: str = 'ingestion/config.yaml', dry_run: bool = Fa
             logger.warning("No new observations were fetched from the World Bank API.")
             return
 
-        # Validate with pandera
         df_obs = pd.DataFrame(all_observations)
         try:
-            validation_schema.validate(df_obs)
-        except pa.errors.SchemaError as e:
-            logger.warning(f"Validation failed: {e}. Dropping invalid rows.")
             df_obs = validation_schema.validate(df_obs, lazy=True)
+        except pa.errors.SchemaErrors as e:
+            logger.warning(f"Validation failed with {len(e.failure_cases)} errors: {e}. Dropping invalid rows.")
+            invalid_indices = e.failure_cases['index'].unique()
+            df_obs = df_obs.drop(index=invalid_indices).reset_index(drop=True)
+            if df_obs.empty:
+                logger.error("All rows invalid after validation. No data to upsert.")
+                return
         all_observations = df_obs.to_dict('records')
 
         logger.info(f"Preparing to upsert {len(all_observations)} observations into the database.")
