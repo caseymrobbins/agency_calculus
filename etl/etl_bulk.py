@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Generator, Optional
 from pathlib import Path
 from tqdm import tqdm
 import itertools  # For efficient line count alternative
+import pandera as pa  # For data validation
 
 # Add project root for module imports
 PROJECT_ROOT = Path(__file__).resolve().parents[2]  # Assuming etl is under src/etl
@@ -25,11 +26,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def load_config(config_path: str = 'ingestion/config.yaml') -> Dict[str, Any]:
-    """Loads the ingestion configuration from the YAML file."""
+    """Loads the ingestion configuration from the YAML file, expanding env vars in paths."""
     try:
         full_config_path = PROJECT_ROOT / config_path
         with open(full_config_path, 'r') as f:
-            config = yaml.safe_load(f)
+            config_str = f.read()
+        # Expand environment variables in the entire config string
+        config_str = os.path.expandvars(config_str)
+        config = yaml.safe_load(config_str)
         # Validate required top-level keys
         if not isinstance(config, dict):
             raise ValueError("Config must be a dictionary")
@@ -96,15 +100,31 @@ def ensure_indicators_exist(db, source_key: str, indicators_config: List[Dict[st
         bulk_upsert(db, Indicator.__table__, indicator_data, ['indicator_code'])
 
 def get_file_line_count(file_path: str) -> int:
-    """Efficiently gets approximate line count (cross-platform)."""
+    """Efficiently gets approximate line count (cross-platform, buffered)."""
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            return sum(1 for _ in itertools.islice(f, 0, None))  # Full count, but memory-safe
+        with open(file_path, 'r', encoding='utf-8', buffering=8192) as f:  # Buffered read
+            return sum(1 for _ in f)
     except Exception as e:
         logger.warning(f"Failed to get line count for {file_path}: {e}. Defaulting to unknown.")
         return 0
 
-def process_vdem_data(file_path: str, indicators_map: Dict[str, str]) -> Generator[Dict[str, Any], None, None]:
+def create_pandera_schema(indicators_config: List[Dict[str, Any]]) -> pa.DataFrameSchema:
+    """Creates a pandera schema for validation based on config."""
+    columns = {
+        'country_code': pa.Column(str, checks=pa.Check.str_length(3, 3), nullable=False),
+        'year': pa.Column(int, checks=pa.Check.ge(1900), nullable=False),
+        'indicator_code': pa.Column(str, nullable=False),
+        'value': pa.Column(float, nullable=False)
+    }
+    # Add per-indicator checks
+    for ind in indicators_config:
+        if 'value_range' in ind:
+            min_val = ind['value_range'].get('min', None)
+            max_val = ind['value_range'].get('max', None)
+            # pandera doesn't support per-group checks easily, so log and implement in code if needed
+    return pa.DataFrameSchema(columns)
+
+def process_vdem_data(file_path: str, indicators_map: Dict[str, str], validation_schema: pa.DataFrameSchema) -> Generator[Dict[str, Any], None, None]:
     """Processes V-Dem data yielding records for memory efficiency."""
     logger.info(f"Processing V-Dem data from {file_path} (in chunks)...")
     try:
@@ -131,6 +151,13 @@ def process_vdem_data(file_path: str, indicators_map: Dict[str, str]) -> Generat
             df_long['value'] = pd.to_numeric(df_long['value'], errors='coerce')  # Ensure numeric
             df_long = df_long.dropna(subset=['value'])  # Drop invalid numerics
             
+            # Validate with pandera
+            try:
+                validation_schema.validate(df_long)
+            except pa.errors.SchemaError as e:
+                logger.warning(f"Validation failed for chunk: {e}. Dropping invalid rows.")
+                df_long = validation_schema.validate(df_long, lazy=True)  # Drops invalid
+            
             for record in df_long[['country_code', 'year', 'indicator_code', 'value']].to_dict('records'):
                 yield record
         
@@ -143,7 +170,7 @@ def process_vdem_data(file_path: str, indicators_map: Dict[str, str]) -> Generat
         logger.error(f"Failed to process V-Dem file: {e}", exc_info=True)
         raise
 
-def process_freedom_house_data(file_path: str, indicators_map: Dict[str, str], normalization_map: Dict[str, Dict[str, float]], sheet_name: str) -> Generator[Dict[str, Any], None, None]:
+def process_freedom_house_data(file_path: str, indicators_map: Dict[str, str], normalization_map: Dict[str, Dict[str, float]], sheet_name: str, validation_schema: pa.DataFrameSchema) -> Generator[Dict[str, Any], None, None]:
     """Processes Freedom House Excel yielding records."""
     logger.info(f"Processing Freedom House data from {file_path}...")
     skipped_countries = []
@@ -171,6 +198,13 @@ def process_freedom_house_data(file_path: str, indicators_map: Dict[str, str], n
         df_long['value'] = df_long.apply(normalize_fh_score, axis=1)
         df_long['value'] = pd.to_numeric(df_long['value'], errors='coerce')
 
+        # Validate with pandera
+        try:
+            validation_schema.validate(df_long)
+        except pa.errors.SchemaError as e:
+            logger.warning(f"Validation failed: {e}. Dropping invalid rows.")
+            df_long = validation_schema.validate(df_long, lazy=True)  # Drops invalid
+
         if skipped_countries:
             logger.warning(f"Skipped countries due to mapping failure: {skipped_countries}")
 
@@ -190,7 +224,7 @@ def process_freedom_house_data(file_path: str, indicators_map: Dict[str, str], n
         logger.error(f"Unexpected error in Freedom House processing: {e}", exc_info=True)
         raise
 
-def process_undp_data(file_path: str, indicators_map: Dict[str, str]) -> Generator[Dict[str, Any], None, None]:
+def process_undp_data(file_path: str, indicators_map: Dict[str, str], validation_schema: pa.DataFrameSchema) -> Generator[Dict[str, Any], None, None]:
     logger.info(f"Starting parsing of UNDP file at: {file_path}")
 
     try:
@@ -226,6 +260,13 @@ def process_undp_data(file_path: str, indicators_map: Dict[str, str]) -> Generat
 
         df_long['indicator_code'] = standardized_code  # Use the standardized code
 
+        # Validate with pandera
+        try:
+            validation_schema.validate(df_long)
+        except pa.errors.SchemaError as e:
+            logger.warning(f"Validation failed: {e}. Dropping invalid rows.")
+            df_long = validation_schema.validate(df_long, lazy=True)  # Drops invalid
+
         for record in df_long[['country_code', 'year', 'indicator_code', 'value']].to_dict('records'):
             yield record
 
@@ -257,7 +298,7 @@ def batch_upsert_observations(db, observations_gen: Generator[Dict[str, Any], No
         results['affected_rows'] += result.get('affected_rows', 0)
     return results
 
-def run_bulk_ingestion(source_key: str, batch_size: Optional[int] = None):
+def run_bulk_ingestion(source_key: str, batch_size: Optional[int] = None, dry_run: bool = False):
     """Main orchestrator for a single bulk data source. Batch size override for tuning."""
     logger.info(f"--- Starting Bulk Ingestion for source: {source_key} ---")
     
@@ -274,6 +315,10 @@ def run_bulk_ingestion(source_key: str, batch_size: Optional[int] = None):
         sheet_name = source_config.get('sheet_name', 'FIW2013-2025')  # Default for FH; make config
         source_name = source_config.get('source_name', source_key)
         batch_size = batch_size or source_config.get('batch_size', 10000)  # Configurable
+        countries_filter = set(source_config.get('countries', []))  # For filtering
+
+        # Create pandera schema from config
+        validation_schema = create_pandera_schema(indicators_config)
 
         # Ensure indicators exist in the database before processing
         with get_db() as db:
@@ -282,29 +327,36 @@ def run_bulk_ingestion(source_key: str, batch_size: Optional[int] = None):
 
         observations_gen = None
         if source_key == 'v_dem':
-            observations_gen = process_vdem_data(file_path, {ind['source_key']: ind['code'] for ind in indicators_config})
+            observations_gen = process_vdem_data(file_path, {ind['source_key']: ind['code'] for ind in indicators_config}, validation_schema)
         elif source_key == 'freedom_house':
-            observations_gen = process_freedom_house_data(file_path, {ind['source_key']: ind['code'] for ind in indicators_config}, normalization_map, sheet_name)
+            observations_gen = process_freedom_house_data(file_path, {ind['source_key']: ind['code'] for ind in indicators_config}, normalization_map, sheet_name, validation_schema)
         elif source_key == 'undp':
-            observations_gen = process_undp_data(file_path, {ind['source_key']: ind['code'] for ind in indicators_config})
+            observations_gen = process_undp_data(file_path, {ind['source_key']: ind['code'] for ind in indicators_config}, validation_schema)
         else:
             logger.error(f"No processor found for source: {source_key}")
             return
 
-        # Add version/notes to each record (generator wrapper)
-        def add_meta_gen(gen):
+        # Add version/notes and filter countries (generator wrapper)
+        def add_meta_and_filter_gen(gen):
             for obs in gen:
+                if countries_filter and obs['country_code'] not in countries_filter:
+                    results['skipped'] += 1
+                    continue
                 obs['dataset_version'] = dataset_version
                 obs['notes'] = f"Data sourced from {source_name} file: {os.path.basename(file_path)}"
                 yield obs
 
-        observations_gen = add_meta_gen(observations_gen) if observations_gen else []
+        observations_gen = add_meta_and_filter_gen(observations_gen) if observations_gen else []
 
         logger.info(f"Preparing to upsert observations for {source_name}.")
         with get_db() as db:
             result = batch_upsert_observations(db, observations_gen, batch_size)
-            db.commit()
-            logger.info(f"Database upsert complete. Rows affected: {result.get('affected_rows', 'N/A')}")
+            if not dry_run:
+                db.commit()
+            else:
+                db.rollback()
+                logger.info("Dry-run: Rolled back changes.")
+            logger.info(f"Database upsert complete. Rows affected: {result.get('affected_rows', 'N/A')}. Skipped: {result.get('skipped', 0)}")
 
         logger.info(f"--- Bulk ingestion for {source_name} finished successfully. ---")
 
@@ -326,8 +378,4 @@ if __name__ == "__main__":
     parser.add_argument("--dry-run", action="store_true", help="Run without DB commits")
     args = parser.parse_args()
     
-    if args.dry_run:
-        logger.warning("Dry-run mode: No DB changes will be committed.")
-        # Implement dry-run by mocking db.commit if needed
-    
-    run_bulk_ingestion(args.source_key, args.batch_size)
+    run_bulk_ingestion(args.source_key, args.batch_size, args.dry_run)

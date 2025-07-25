@@ -1,8 +1,17 @@
+python
+
+Collapse
+
+Wrap
+
+Run
+
+Copy
 import pandas as pd
 import numpy as np
 import warnings
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
 from statsmodels.tsa.statespace.varmax import VARMAX
 from statsmodels.tsa.api import VAR
 from statsmodels.tsa.vector_ar.vecm import VECM
@@ -26,7 +35,7 @@ class HybridForecaster:
     and XGBoost for non-linear residuals. Handles stationarity, cointegration, and uncertainty.
     """
 
-    def __init__(self, max_lags: int = 10, xgb_params: Optional[Dict] = None):
+    def __init__(self, max_lags: int = 1, xgb_params: Optional[Dict] = None):  # Reduced default max_lags
         self.max_lags = max_lags
         default_xgb_params = {
             'n_estimators': 300, 'max_depth': 6, 'learning_rate': 0.05,
@@ -129,16 +138,27 @@ class HybridForecaster:
         self.lag_order_ = self._select_lag_order(processed_endog, aligned_exog)
 
         logger.info("Fitting core model...")
-        if is_cointegrated:
-            logger.info(f"Fitting VECM with rank {rank}...")
-            self.model_type_ = 'VECM'
-            self.vecm_model_ = VECM(endog=processed_endog, exog=aligned_exog, k_ar_diff=self.lag_order_, coint_rank=rank).fit()
-            residuals = pd.DataFrame(self.vecm_model_.resid, index=processed_endog.index, columns=self.endog_columns_)
-        else:
-            logger.info("Fitting VARMAX...")
+        try:
+            if is_cointegrated:
+                logger.info(f"Fitting VECM with rank {rank}...")
+                self.model_type_ = 'VECM'
+                self.vecm_model_ = VECM(endog=processed_endog, exog=aligned_exog, k_ar_diff=self.lag_order_, coint_rank=rank).fit()
+                resid = self.vecm_model_.resid
+            else:
+                logger.info("Fitting VARMAX...")
+                self.model_type_ = 'VARMAX'
+                self.varx_model_ = VARMAX(endog=processed_endog, exog=aligned_exog, order=(self.lag_order_, 0)).fit(disp=False)
+                resid = self.varx_model_.resid
+            # Fix shape by slicing index to match resid length
+            residuals_index = processed_endog.index[-len(resid):]
+            residuals = pd.DataFrame(resid, index=residuals_index, columns=self.endog_columns_)
+        except Exception as e:
+            logger.error(f"Core model fitting failed: {e}. Falling back to VARMAX.")
             self.model_type_ = 'VARMAX'
-            self.varx_model_ = VARMAX(endog=processed_endog, exog=aligned_exog, order=(self.lag_order_, 0)).fit(disp=False)
-            residuals = pd.DataFrame(self.varx_model_.resid, index=processed_endog.index, columns=self.endog_columns_)
+            self.varx_model_ = VARMAX(endog=processed_endog, exog=aligned_exog, order=(1, 0)).fit(disp=False)
+            resid = self.varx_model_.resid
+            residuals_index = processed_endog.index[-len(resid):]
+            residuals = pd.DataFrame(resid, index=residuals_index, columns=self.endog_columns_)
         self.training_residuals_ = residuals
 
         # Prepare features for XGBoost: lagged residuals + exog
@@ -170,8 +190,7 @@ class HybridForecaster:
 
         if self.model_type_ == 'VECM':
             vecm_forecast = self.vecm_model_.forecast(steps=steps, exog=future_exog)
-            vecm_forecast = pd.DataFrame(vecm_forecast, columns=self.endog_columns_, index=future_exog.index if future_exog is not None else pd.RangeIndex(steps))
-            forecast = vecm_forecast
+            forecast = pd.DataFrame(vecm_forecast, columns=self.endog_columns_, index=future_exog.index if future_exog is not None else pd.RangeIndex(steps))
         else:
             forecast = self.varx_model_.forecast(steps=steps, exog=future_exog)
             forecast = pd.DataFrame(forecast, columns=self.endog_columns_, index=future_exog.index if future_exog is not None else pd.RangeIndex(steps))

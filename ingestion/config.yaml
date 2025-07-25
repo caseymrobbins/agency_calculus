@@ -109,10 +109,10 @@ v_dem:
       normalization: { max: 4 }  # Normalize to 0-100
 
 freedom_house:
-  file_path: "${DATA_ROOT}/data/raw/Freedom_in_the_World_2025.xlsx"  # Download from freedomhouse.org
-  dataset_version: "FIW-2025"
+  file_path: "${DATA_ROOT}/data/raw/All Data, FIW 2013-2024 (Excel Download).xlsx"
+  dataset_version: "FIW-2024"  # Matches file; update to FIW-2025 if data includes 2025
   source_name: "Freedom-House"
-  sheet_name: "FIW2013-2025"  # Adjust if different
+  sheet_name: "All Data"  # Adjust based on actual sheet name
   countries:
     - USA
     - HTI
@@ -122,15 +122,15 @@ freedom_house:
       name: "Political Rights Score"
       domain: political
       type: numeric
-      value_range: { min: 0, max: 40 }
-      normalization: { max: 40 }  # (value / 40) * 100
+      value_range: { min: 0, max: 40 }  # Pre-normalization
+      normalization: { max: 40 }  # To 0-100
     - source_key: CL
       code: FH_CIVIL_LIBERTIES
       name: "Civil Liberties Score"
       domain: political
       type: numeric
-      value_range: { min: 0, max: 60 }
-      normalization: { max: 60 }  # (value / 60) * 100
+      value_range: { min: 0, max: 60 }  # Pre-normalization
+      normalization: { max: 60 }  # To 0-100
 
 undp:
   file_path: "${DATA_ROOT}/data/raw/UNDP_Human_Development_Report_2025.csv"  # Download from hdr.undp.org
