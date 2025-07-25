@@ -1,18 +1,47 @@
-# config/config.yaml
-# Unified Configuration for the Agency Monitor Project
-
-# --- API Configuration ---
-api:
-  rate_limit: "100/minute"
-
-# --- Model Configuration ---
+ingestion:
+  target_countries: ["USA", "HTI", "CHL"]
+  world_bank:
+    indicators:
+      - code: "NY.GDP.PCAP.CD"
+        name: "GDP per capita (current US$)"
+        domain: "economic"
+      - code: "SL.UEM.TOTL.ZS"
+        name: "Unemployment, total (% of total labor force)"
+        domain: "economic"
+      - code: "SP.DYN.LE00.IN"
+        name: "Life expectancy at birth, total (years)"
+        domain: "health"
+      - code: "SE.ADT.LITR.ZS"
+        name: "Literacy rate, adult total (% of people ages 15 and above)"
+        domain: "educational"
+normalization_stats:
+  NY.GDP.PCAP.CD:
+    p25: 1000
+    p75: 50000
+    mean: 15000
+    std: 10000
+  SL.UEM.TOTL.ZS:
+    p25: 3
+    p75: 15
+    mean: 7
+    std: 4
+  SP.DYN.LE00.IN:
+    p25: 60
+    p75: 80
+    mean: 70
+    std: 5
+  SE.ADT.LITR.ZS:
+    p25: 70
+    p75: 98
+    mean: 85
+    std: 12
+paths:
+  validation_cases_path: data/validation_cases.json
+  validation_report_path: reports/validation_report.json
 models:
-  # Directory where trained model artifacts (.pkl files) are stored and loaded from
-  directory: "models/"
-
-  # Default parameters for the HybridForecaster
+  directory: "models"
   hybrid_forecaster:
-    max_lags: 8
+    max_lags: 10
     xgb_params:
       n_estimators: 300
       max_depth: 6
@@ -24,53 +53,14 @@ models:
       reg_lambda: 1.0
       random_state: 42
       n_jobs: -1
-
-# --- ETL Ingestion Configuration ---
-ingestion:
-  target_countries:
-    - USA
-    - HTI
-
-  world_bank:
-    indicators:
-      # Economic
-      - { code: "NY.GDP.MKTP.CD", name: "GDP (current US$)", domain: "economic" }
-      - { code: "NY.GDP.PCAP.CD", name: "GDP per capita (current US$)", domain: "economic" }
-      - { code: "SL.UEM.TOTL.ZS", name: "Unemployment, total (% of total labor force)", domain: "economic" }
-      - { code: "SI.POV.GINI", name: "Gini index", domain: "economic" }
-      # Health
-      - { code: "SP.DYN.LE00.IN", name: "Life expectancy at birth, total (years)", domain: "health" }
-      - { code: "SH.XPD.GHED.GD.ZS", name: "Domestic general government health expenditure (% of GDP)", domain: "health" }
-      # Educational
-      - { code: "SE.ADT.LITR.ZS", name: "Literacy rate, adult total (% of people ages 15 and above)", domain: "educational" }
-      - { code: "SE.XPD.TOTL.GD.ZS", name: "Government expenditure on education, total (% of GDP)", domain: "educational" }
-
-  v_dem:
-    file_path: "data/raw/V-Dem-CY-Full+Others-v15.csv"
-    dataset_version: "V-Dem-v15"
-    source_name: "V-Dem"
-    indicators_to_extract:
-      - { code: "v2eltrnout", name: "Voter Turnout", domain: "political" }
-      - { code: "v2cacamps", name: "Political polarization", domain: "social" }
-      - { code: "v2psoppaut", name: "Opposition parties autonomy", domain: "political" }
-
-  freedom_house:
-    file_path: "data/raw/Freedom_in_the_World_2024.xlsx"
-    dataset_version: "FIW-2024"
-    source_name: "Freedom House"
-    indicators_to_extract:
-      - { code: "PR", name: "Political Rights Index", domain: "political" }
-
-  undp:
-    file_path: "data/raw/UNDP_Human_Development_Report_2023-24.csv"
-    dataset_version: "UNDP-HDR-2024"
-    source_name: "UNDP"
-    indicators_to_extract:
-      - { code: "Mean years of schooling", name: "Mean years of schooling", domain: "educational" }
-
-# --- NLP Policy Scorer Configuration ---
-policy_scorer:
-  model: "facebook/bart-large-mnli"
-  confidence_threshold: 0.50
+features:
+  shock_penalty_scale: 2.0
+  windows:
+    short: 3
+    medium: 7
+    long: 15
+nlp:
+  confidence_threshold: 0.5
+  normalization: density
   max_chunk_length: 512
   min_chunk_length: 25

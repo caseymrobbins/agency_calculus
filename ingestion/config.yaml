@@ -1,68 +1,171 @@
-# Configuration for ETL ingestion scripts.
-# This file defines target countries and indicators for various data sources.
+# Configuration for ETL ingestion scripts in the Agency Monitor project.
+# Defines sources, countries, indicators, file paths, and versions.
+# Structure: Indicators as list of dicts with source_key, code, name, domain, normalization, validation (value_range, type).
+# Paths use DATA_ROOT env var (e.g., /data/raw). Update paths after downloading files.
+# Updated to latest versions as of July 24, 2025 (V-Dem v15, Freedom House 2025, UNDP HDR 2025).
+# Config version for traceability in CI/CD pipelines.
+config_version: "1.0.0"
 
 # Section for the World Bank API Ingestion (Task 1.2)
 world_bank:
-  # Target countries using their ISO 3166-1 alpha-3 codes.
-  # As per the validation plan, we start with USA and Haiti.
+  # Target countries using ISO 3166-1 alpha-3 codes (start with USA/HTI per validation plan; expandable).
   countries:
     - USA
     - HTI
-
-  # World Bank indicators identified in the data sourcing research document.
-  # These cover the Economic, Health, and Educational domains.
+  # World Bank indicators from data sourcing research (Economic, Health, Educational domains).
   indicators:
     # Economic Agency Indicators
-    - code: NY.GDP.MKTP.CD
+    - source_key: NY.GDP.MKTP.CD
+      code: NY.GDP.MKTP.CD
       name: "GDP (current US$)"
-    - code: NY.GDP.PCAP.CD
+      domain: economic
+      type: numeric
+      value_range: { min: 0 }
+    - source_key: NY.GDP.PCAP.CD
+      code: NY.GDP.PCAP.CD
       name: "GDP per capita (current US$)"
-    - code: SL.UEM.TOTL.ZS
+      domain: economic
+      type: numeric
+      value_range: { min: 0 }
+    - source_key: SL.UEM.TOTL.ZS
+      code: SL.UEM.TOTL.ZS
       name: "Unemployment, total (% of total labor force) (modeled ILO estimate)"
-    - code: SI.POV.GINI
+      domain: economic
+      type: percentage
+      value_range: { min: 0, max: 100 }
+    - source_key: SI.POV.GINI
+      code: SI.POV.GINI
       name: "Gini index"
+      domain: economic
+      type: percentage
+      value_range: { min: 0, max: 100 }
 
     # Health Agency Indicators
-    - code: SP.DYN.LE00.IN
+    - source_key: SP.DYN.LE00.IN
+      code: SP.DYN.LE00.IN
       name: "Life expectancy at birth, total (years)"
-    - code: SP.DYN.IMRT.IN
+      domain: health
+      type: numeric
+      value_range: { min: 0, max: 100 }
+    - source_key: SP.DYN.IMRT.IN
+      code: SP.DYN.IMRT.IN
       name: "Mortality rate, infant (per 1,000 live births)"
-    - code: SH.XPD.GHED.GD.ZS
+      domain: health
+      type: numeric
+      value_range: { min: 0 }
+    - source_key: SH.XPD.GHED.GD.ZS
+      code: SH.XPD.GHED.GD.ZS
       name: "Domestic general government health expenditure (% of GDP)"
+      domain: health
+      type: percentage
+      value_range: { min: 0, max: 100 }
 
     # Educational Agency Indicators
-    - code: SE.ADT.LITR.ZS
+    - source_key: SE.ADT.LITR.ZS
+      code: SE.ADT.LITR.ZS
       name: "Literacy rate, adult total (% of people ages 15 and above)"
-    - code: SE.XPD.TOTL.GD.ZS
+      domain: educational
+      type: percentage
+      value_range: { min: 0, max: 100 }
+    - source_key: SE.XPD.TOTL.GD.ZS
+      code: SE.XPD.TOTL.GD.ZS
       name: "Government expenditure on education, total (% of GDP)"
+      domain: educational
+      type: percentage
+      value_range: { min: 0, max: 100 }
 
 # Section for Bulk Data Ingestion (Task 1.3)
+# Countries: Optional; defaults to all in file if not specified. Matches validation.required_countries where possible.
+# Validation: Enforce min/max years, value ranges in ETL.
+
 v_dem:
-  # Path to the raw CSV file within our data folder
-  file_path: "data/raw/V-Dem-CY-Full+Others-v15.csv"
-  # The version we will tag this data with in the database
+  file_path: "${DATA_ROOT}/data/raw/V-Dem-CY-Full+Others-v15.csv"  # Download from v-dem.net
   dataset_version: "V-Dem-v15"
-  # The specific source name for logging
   source_name: "V-Dem"
-  # Precise column names from the V-Dem dataset to extract and map to our indicator codes
+  batch_size: 100000  # For chunking large files
+  countries:  # Optional; process all if omitted
+    - USA
+    - HTI
   indicators:
-    v2eltrnout: VDEM_VOTER_TURNOUT # Voter Turnout
-    v2cacamps: VDEM_POLARIZATION  # Political polarization
-    v2psoppaut: VDEM_OPPOSITION_AUTONOMY # Opposition parties autonomy
+    - source_key: v2eltrnout
+      code: VDEM_VOTER_TURNOUT
+      name: "Voter Turnout (% of registered voters)"
+      domain: political
+      type: percentage
+      value_range: { min: 0, max: 100 }
+    - source_key: v2cacamps
+      code: VDEM_POLARIZATION
+      name: "Societal Polarization"
+      domain: political
+      type: numeric
+      value_range: { min: 0, max: 4 }  # Raw scale per V-Dem doc
+      normalization: { max: 4 }  # Normalize to 0-100: (value / 4) * 100
+    - source_key: v2psoppaut
+      code: VDEM_OPPOSITION_AUTONOMY
+      name: "Opposition Parties Autonomy"
+      domain: political
+      type: numeric
+      value_range: { min: 0, max: 4 }  # Per V-Dem doc
+      normalization: { max: 4 }  # Normalize to 0-100
 
 freedom_house:
-  file_path: "data/raw/Freedom_in_the_World_2024.xlsx"
-  dataset_version: "FIW-2024"
+  file_path: "${DATA_ROOT}/data/raw/Freedom_in_the_World_2025.xlsx"  # Download from freedomhouse.org
+  dataset_version: "FIW-2025"
   source_name: "Freedom-House"
-  # Define the indicators for Freedom House here
+  sheet_name: "FIW2013-2025"  # Adjust if different
+  countries:
+    - USA
+    - HTI
   indicators:
-    PR: FH_POLITICAL_RIGHTS # Political Rights score
-    CL: FH_CIVIL_LIBERTIES # Civil Liberties score
+    - source_key: PR
+      code: FH_POLITICAL_RIGHTS
+      name: "Political Rights Score"
+      domain: political
+      type: numeric
+      value_range: { min: 0, max: 40 }
+      normalization: { max: 40 }  # (value / 40) * 100
+    - source_key: CL
+      code: FH_CIVIL_LIBERTIES
+      name: "Civil Liberties Score"
+      domain: political
+      type: numeric
+      value_range: { min: 0, max: 60 }
+      normalization: { max: 60 }  # (value / 60) * 100
 
 undp:
-  file_path: "data/raw/UNDP_Human_Development_Report_2023-24.csv" # NOTE: Ensure this filename matches your download
-  dataset_version: "UNDP-HDR-2024"
+  file_path: "${DATA_ROOT}/data/raw/UNDP_Human_Development_Report_2025.csv"  # Download from hdr.undp.org
+  dataset_version: "UNDP-HDR-2025"
   source_name: "UNDP"
-  # Define the indicator for UNDP here (usually just one primary one)
+  countries:
+    - USA
+    - HTI
   indicators:
-    "Mean years of schooling, adults (years) (ages 25 and older)": UNDP_MEAN_YEARS_SCHOOLING
+    - source_key: "Mean years of schooling, adults (years) (ages 25 and older)"
+      code: UNDP_MEAN_YEARS_SCHOOLING
+      name: "Mean Years of Schooling"
+      domain: educational
+      type: numeric
+      value_range: { min: 0, max: 20 }  # Reasonable max for schooling years
+
+# Suggested Additional Source (from sourcing doc)
+transparency_international:
+  file_path: "${DATA_ROOT}/data/raw/CPI_2025.csv"  # Download from transparency.org
+  dataset_version: "CPI-2025"
+  source_name: "Transparency-International"
+  countries:
+    - USA
+    - HTI
+  indicators:
+    - source_key: CPI
+      code: TI_CORRUPTION_PERCEPTION
+      name: "Corruption Perceptions Index"
+      domain: social
+      type: numeric
+      value_range: { min: 0, max: 100 }  # Already 0-100 scale
+      # No normalization needed
+
+# Global Validation Section
+validation:
+  min_year: 1990
+  max_year: 2025
+  required_countries: [USA, HTI]  # Must be present in all sources

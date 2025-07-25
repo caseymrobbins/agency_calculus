@@ -1,72 +1,62 @@
-#.gitignore
+# .gitignore
 
-# --- Secrets ---
-# CRITICAL: Ignore environment files containing secrets
+# --- Secrets --- 
+# CRITICAL: ignore environment files
 .env
-.env.*
 *.env
 
-# --- Python ---
-# Virtual environments
-venv/
-.venv/
-env/
-.env/
-ENV/
-
-# Cache and compiled files
+# --- Python --- 
 __pycache__/
+*.py[cod]
 *.pyc
 *.pyo
 *.pyd
 .Python
-*.egg-info/
-.mypy_cache/
-.ruff_cache/
+pip-log.txt
+pip-delete-this-directory.txt
 
-# Testing artifacts
-.pytest_cache/
-.coverage
-htmlcov
-.tox/
+# --- Virtual Environments --- 
+venv/
+env/
+.venv/
 
-# Build artifacts
-build/
-dist/
-*.egg
+# --- Jupyter --- 
+.ipynb_checkpoints
+*.ipynb
 
-# --- IDE & Editor ---
-.vscode/
+# --- IDE/Editors --- 
 .idea/
+.vscode/
 *.swp
 *.swo
 *~
 
-# --- OS-specific ---
+# --- OS Files --- 
 .DS_Store
 Thumbs.db
 
-# --- Data & Models ---
-# Ignore raw data files and large trained models that are not versioned
-data/raw/
-models/
-*.pkl
-*.joblib
-*.log
+# --- Logs --- 
 logs/
+*.log
 
-# --- Jupyter Notebook ---
-.ipynb_checkpoints/
+# --- Data --- 
+data/raw/
+data/processed/
+data/external/
 
-# --- Docker ---
-# Ignore build context files that are not needed
-.dockerignore
-# Note: Dockerfile and docker-compose files SHOULD be versioned
+# --- Models --- 
+models/*.pkl  # But version model configs if needed
 
-# --- Documentation ---
-# Can be uncommented if docs are hosted elsewhere
-# docs/_build/
+# --- Tests --- 
+tests/__pycache__/
+.pytest_cache/
 
-# --- Temporary Files ---
+# --- Docs --- 
+docs/_build/
+
+# --- Temporary Files --- 
 tmp/
 temp/
+all_project_contents.txt
+all_python_code.txt
+all_python_code.pdf

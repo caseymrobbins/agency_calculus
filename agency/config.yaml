@@ -1,0 +1,53 @@
+# Agency Calculus Config
+# Version: 1.0 (July 24, 2025)
+# Sections: brittleness, agency, violation_impact
+
+brittleness:
+  risk_thresholds:
+    LOW: 0
+    MEDIUM: 4
+    HIGH: 7
+    CRITICAL: 9
+  historical_calibration:
+    5: 1e6    # 5th percentile
+    25: 10e9  # 25th percentile
+    50: 2e9   # Median
+    75: 100e9 # 75th percentile
+    90: 50e9  # 90th percentile
+    95: 200e9 # 95th percentile (very brittle)
+  min_gdp: 1e6
+  max_gdp: 1e15
+  output_scale: 10.0
+
+agency:
+  domain_weights:
+    framework_average:
+      economic: 0.2
+      political: 0.2
+      social: 0.2
+      health: 0.2
+      educational: 0.2
+    libertarian:
+      economic: 0.4
+      political: 0.3
+      social: 0.1
+      health: 0.1
+      educational: 0.1
+    socialist:
+      economic: 0.15
+      political: 0.25
+      social: 0.3
+      health: 0.2
+      educational: 0.1
+    communitarian:
+      economic: 0.25
+      political: 0.25
+      social: 0.25
+      health: 0.1
+      educational: 0.15
+
+violation_impact:
+  attack_factor_c: 1.0
+  disparity_sensitivity_k: 1.0
+  power_ratio_clip_min: 1
+  power_ratio_clip_max: 1000

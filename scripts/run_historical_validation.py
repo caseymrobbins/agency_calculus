@@ -1,4 +1,3 @@
-# scripts/run_historical_validation.py
 """
 Historical Validation Pipeline for the Agency Monitor System (Refactored)
 
@@ -22,18 +21,16 @@ import yaml
 from pathlib import Path
 from typing import Dict, Any, List, Tuple
 from datetime import datetime
-import matplotlib.pyplot as plt
-import seaborn as sns
 
 # Add project root to path
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(PROJECT_ROOT))
 
 from ai.hybrid_forecaster import HybridForecaster
 from ai.training.feature_engineering import FeatureEngineer
 from agency.brittleness_engine import BrittlenessEngine
 from agency.calculator import AgencyCalculator
-from api.database import get_db, Session
+from api.database import get_db
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,16 +38,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 class HistoricalValidator:
     """Orchestrates historical validation of the full prediction pipeline."""
 
     def __init__(self, config_path: str = 'config/config.yaml'):
         self.config = self._load_config(config_path)
-        self.validation_results =
-        self.feature_importance_history = {}
+        self.validation_results: List[Dict] = []
+        self.feature_importance_history: Dict = {}
         # Initialize the calculation engines
         self.agency_calculator = AgencyCalculator(ideology="framework_average")
         self.brittleness_engine = BrittlenessEngine(self.agency_calculator)
+        self.featured_data: pd.DataFrame = pd.DataFrame()
 
     def _load_config(self, config_path: str) -> Dict:
         """Loads and validates configuration."""
@@ -58,22 +57,11 @@ class HistoricalValidator:
         try:
             with open(config_file, 'r') as f:
                 config = yaml.safe_load(f)
-            
+            # Ensure paths are absolute for script execution from any context
             paths = config.get('paths', {})
-            defaults = {
-                'raw_historical_data_path': 'data/raw/historical_collapses.json',
-                'featured_data_path': 'data/featured/historical_features.json',
-                'validation_cases_path': 'data/validation/validation_cases.json',
-                'production_model_path': 'models/brittleness_predictor_prod.pkl',
-                'metrics_path': 'models/validation_metrics.json',
-                'plot_path': 'plots/feature_importance.png',
-                'validation_report_path': 'reports/validation_report.json'
-            }
-            for key, default in defaults.items():
-                if key not in paths:
-                    paths[key] = default
-            
-            config['paths'] = {key: PROJECT_ROOT / value for key, value in paths.items()}
+            for key, value in paths.items():
+                paths[key] = PROJECT_ROOT / value
+            config['paths'] = paths
             return config
         except Exception as e:
             logger.error(f"Failed to load config from {config_file}: {e}")
@@ -91,44 +79,32 @@ class HistoricalValidator:
             raise
 
     def _load_data_from_db(self) -> pd.DataFrame:
-        """Loads all agency_scores and observations from the database."""
+        """Loads all agency_scores from the database for feature engineering."""
         logger.info("Loading training data from database...")
-        with get_db() as db:
-            # Load agency scores (endogenous variables)
+        db_gen = get_db()
+        db = next(db_gen)
+        try:
             agency_query = "SELECT * FROM agency_scores"
-            endog_df = pd.read_sql(agency_query, db.bind, index_col='year')
-            endog_df.index = pd.to_datetime(endog_df.index, format='%Y')
-
-            # In a real system, you would also load exogenous features here
-            # For now, we generate synthetic ones for demonstration
-            exog_df = pd.DataFrame(index=endog_df.index)
-            exog_df['shock_magnitude'] = np.random.exponential(0.1, len(endog_df))
-            exog_df['recovery_slope'] = np.random.uniform(-0.1, 0.1, len(endog_df))
-            
-            # Combine for feature engineering context
-            full_df = pd.concat([endog_df, exog_df], axis=1)
-            
-        logger.info(f"Loaded {len(full_df)} total records from database.")
-        return full_df
+            df = pd.read_sql(agency_query, db.bind)
+            # Convert year to a proper DatetimeIndex
+            df['year'] = pd.to_datetime(df['year'], format='%Y')
+            df.set_index('year', inplace=True)
+            logger.info(f"Loaded {len(df)} total records from database.")
+            return df
+        finally:
+            db.close()
 
     def prepare_data(self) -> pd.DataFrame:
         """Prepares data for validation, generating features if necessary."""
-        featured_path = self.config['paths']['featured_data_path']
-        if featured_path.exists():
-            logger.info(f"Loading pre-engineered features from {featured_path}")
-            with open(featured_path, 'r') as f:
-                data = json.load(f)
-            df = pd.DataFrame(data['data'])
-            df['date'] = pd.to_datetime(df['timestamp'])
-            df = df.set_index('date')
-            return df
-        
-        logger.info("No pre-engineered features found. Loading from DB and engineering on the fly.")
-        # This assumes a feature engineering pipeline that can operate on the DB data
-        # For this example, we'll use a simplified placeholder
-        return self._load_data_from_db()
+        raw_data = self._load_data_from_db()
+        logger.info("Engineering features for the entire dataset...")
+        feature_engineer = FeatureEngineer(**self.config.get('features', {}))
+        endog_df, exog_df = feature_engineer.run_pipeline(raw_data)
+        self.featured_data = pd.concat([endog_df, exog_df, raw_data[['country_code']]], axis=1)
+        self.featured_data.dropna(inplace=True)
+        return self.featured_data
 
-    def validate_single_case(self, train_df: pd.DataFrame, test_case: Dict[str, Any], country_code: str) -> Tuple]:
+    def validate_single_case(self, train_df: pd.DataFrame, test_case: Dict[str, Any], country_code: str) -> Tuple[bool, Dict]:
         """Validate a single historical case using the full pipeline."""
         country_name = test_case['name']
         prediction_year = test_case['prediction_year']
@@ -139,7 +115,7 @@ class HistoricalValidator:
 
         # 1. Prepare data for this specific validation run
         endog_cols = ['economic_agency', 'political_agency', 'social_agency', 'health_agency', 'educational_agency']
-        exog_cols = [col for col in train_df.columns if col not in endog_cols and col!= 'country_code']
+        exog_cols = [col for col in train_df.columns if col not in endog_cols and col != 'country_code']
 
         endog_train = train_df[endog_cols]
         exog_train = train_df[exog_cols]
@@ -154,20 +130,20 @@ class HistoricalValidator:
             (self.featured_data['country_code'] == country_code) &
             (self.featured_data.index.year == prediction_year - 1)
         ]
+
         if test_data_year_before.empty:
             logger.error(f"No data found for {country_name} in {prediction_year - 1} to make a forecast.")
             return False, {'country': country_name, 'year': prediction_year, 'success': False, 'error': 'No data for forecast'}
 
-        future_exog_df = test_data_year_before[exog_cols] # Simplified: assumes exog for next year is known
+        future_exog_df = test_data_year_before[exog_cols]
 
         # 4. Forecast the 5 agency domains
         agency_forecast_df = forecaster.predict(steps=1, future_exog_df=future_exog_df)
-        agency_scores_forecast = agency_forecast_df.iloc.to_dict()
+        agency_scores_forecast = agency_forecast_df.iloc[0].to_dict()
 
         # 5. Calculate the brittleness score from the forecast
         # Placeholder for GDP - a real system would need a GDP forecast as well
-        nominal_gdp_forecast = 20e9 # $20B, a plausible value for a fragile state
-        
+        nominal_gdp_forecast = 20e9  # $20B, a plausible value for a fragile state
         brittleness_result = self.brittleness_engine.calculate_systemic_brittleness(
             agency_scores=agency_scores_forecast,
             nominal_gdp=nominal_gdp_forecast,
@@ -179,11 +155,11 @@ class HistoricalValidator:
         difference = abs(predicted_score - expected_score)
         success = difference <= tolerance
 
-        logger.info(f"  - Forecasted Agency Scores: { {k: round(v, 2) for k, v in agency_scores_forecast.items()} }")
-        logger.info(f"  - Calculated Brittleness Score: {predicted_score:.2f}")
-        logger.info(f"  - Expected Brittleness Score: {expected_score:.2f} ± {tolerance}")
-        logger.info(f"  - Difference: {difference:.2f}")
-        logger.info(f"  - Status: {'✅ PASS' if success else '❌ FAIL'}")
+        logger.info(f" - Forecasted Agency Scores: {{ {', '.join([f'{k}: {v:.2f}' for k, v in agency_scores_forecast.items()])} }}")
+        logger.info(f" - Calculated Brittleness Score: {predicted_score:.2f}")
+        logger.info(f" - Expected Brittleness Score: {expected_score:.2f} ± {tolerance}")
+        logger.info(f" - Difference: {difference:.2f}")
+        logger.info(f" - Status: {'✅ PASS' if success else '❌ FAIL'}")
 
         result = {
             'country': country_name,
@@ -200,30 +176,28 @@ class HistoricalValidator:
 
     def run_validation(self) -> bool:
         """Run complete leave-one-out validation."""
-        logger.info("="*60)
+        logger.info("=" * 60)
         logger.info("STARTING HISTORICAL VALIDATION PIPELINE")
-        logger.info("="*60)
+        logger.info("=" * 60)
 
-        self.featured_data = self.prepare_data()
+        self.prepare_data()
         validation_cases = self.load_validation_cases()
-
         all_passed = True
+
         for country_code, case_details in validation_cases.items():
-            train_df = self.featured_data[self.featured_data['country_code']!= country_code]
-            
+            train_df = self.featured_data[self.featured_data['country_code'] != country_code].copy()
             success, result = self.validate_single_case(train_df, case_details, country_code)
             self.validation_results.append(result)
             if not success:
                 all_passed = False
-        
+
         self._generate_validation_report()
 
         if all_passed:
             logger.info("\n✅ All historical validation cases PASSED!")
-            # self._train_and_deploy_production_models() # This would be the next step
         else:
             logger.error("\n❌ One or more historical validation cases FAILED. Production model not trained.")
-        
+
         return all_passed
 
     def _generate_validation_report(self):
@@ -232,17 +206,18 @@ class HistoricalValidator:
             'timestamp': datetime.now().isoformat(),
             'summary': {
                 'total_cases': len(self.validation_results),
-                'passed': sum(1 for r in self.validation_results if r['success']),
-                'failed': sum(1 for r in self.validation_results if not r.get('success', True)),
-                'avg_error': np.mean([r.get('difference', 0) for r in self.validation_results])
+                'passed': sum(1 for r in self.validation_results if r.get('success')),
+                'failed': sum(1 for r in self.validation_results if not r.get('success')),
+                'avg_error': np.mean([r.get('difference', 0) for r in self.validation_results if 'difference' in r])
             },
             'details': self.validation_results
         }
         report_path = self.config['paths']['validation_report_path']
-        report_path.parent.mkdir(exist_ok=True)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
         with open(report_path, 'w') as f:
             json.dump(report, f, indent=2)
         logger.info(f"\nValidation report saved to {report_path}")
+
 
 def main():
     """Main entry point."""
@@ -253,6 +228,7 @@ def main():
     except Exception as e:
         logger.critical(f"Fatal error in validation pipeline: {e}", exc_info=True)
         return 1
+
 
 if __name__ == "__main__":
     sys.exit(main())

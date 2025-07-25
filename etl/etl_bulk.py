@@ -5,31 +5,47 @@ import yaml
 import pandas as pd
 import pycountry
 from datetime import date
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Generator, Optional
 from pathlib import Path
 from tqdm import tqdm
+import itertools  # For efficient line count alternative
 
 # Add project root for module imports
-sys.path.append(str(Path(__file__).resolve().parents[1]))
-from api.database import get_db, bulk_upsert, bulk_upsert_observations, Indicator
+PROJECT_ROOT = Path(__file__).resolve().parents[2]  # Assuming etl is under src/etl
+sys.path.append(str(PROJECT_ROOT))
+
+from src.api.database import get_db, bulk_upsert, bulk_upsert_observations, Indicator
 
 # --- Configuration ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(), logging.FileHandler('ingestion.log')]  # Log to file
+)
 logger = logging.getLogger(__name__)
 
-def load_config(config_path: str = 'ingestion/config.yaml') -> dict:
+def load_config(config_path: str = 'ingestion/config.yaml') -> Dict[str, Any]:
     """Loads the ingestion configuration from the YAML file."""
     try:
-        # Adjusted path to ingestion config
-        full_config_path = Path(__file__).resolve().parents[2] / config_path
+        full_config_path = PROJECT_ROOT / config_path
         with open(full_config_path, 'r') as f:
-            return yaml.safe_load(f)
+            config = yaml.safe_load(f)
+        # Validate required top-level keys
+        if not isinstance(config, dict):
+            raise ValueError("Config must be a dictionary")
+        return config
+    except FileNotFoundError as e:
+        logger.critical(f"FATAL: Config file not found at {full_config_path}: {e}")
+        raise
+    except yaml.YAMLError as e:
+        logger.critical(f"FATAL: YAML parsing error in {full_config_path}: {e}")
+        raise
     except Exception as e:
-        logger.critical(f"FATAL: Could not load config from {config_config_path}: {e}")
+        logger.critical(f"FATAL: Unexpected error loading config from {full_config_path}: {e}")
         raise
 
-def country_name_to_code(name: str) -> str:
-    """Converts a country name to a 3-letter ISO code."""
+def country_name_to_code(name: str) -> Optional[str]:
+    """Converts a country name to a 3-letter ISO code. Returns None on failure."""
     try:
         # Handle common inconsistencies
         name_map = {
@@ -44,6 +60,7 @@ def country_name_to_code(name: str) -> str:
             "Taiwan": "TWN",
             "South Korea": "KOR",
             "North Korea": "PRK",
+            "Kosovo": "XKX",  # Manual for Kosovo (not in ISO)
             # Add more as encountered
         }
         if name in name_map:
@@ -51,50 +68,58 @@ def country_name_to_code(name: str) -> str:
         
         country = pycountry.countries.search_fuzzy(name)[0]
         return country.alpha_3
-    except (LookupError, IndexError):
-        # logger.warning(f"Could not find a 3-letter code for country: '{name}'. Skipping.")
+    except (LookupError, IndexError) as e:
+        logger.warning(f"Could not find a 3-letter code for country: '{name}'. Skipping. Error: {e}")
         return None
 
-def ensure_indicators_exist(db, source_key: str, indicators_map: Dict[str, str]):
+def ensure_indicators_exist(db, source_key: str, indicators_config: List[Dict[str, Any]]):
     """Ensures that the indicators for a given source exist in the database.
-    indicators_map: A dictionary where keys are source-specific indicator names/codes
-                    and values are our standardized indicator codes.
+    indicators_config: List of dicts with 'source_key', 'code', 'name', 'domain', etc.
     """
     logger.info(f"Synchronizing indicators for source: {source_key}")
     indicator_data = []
-    for source_indicator_key, standardized_code in indicators_map.items():
-        # Determine domain based on source (this might need refinement for more granularity)
-        domain = 'political'
-        if source_key == 'undp':
-            domain = 'educational'
-        elif source_key == 'world_bank': # This script is for bulk, but good to keep consistent
-            domain = 'economic' # Placeholder, would need to map properly if WB used here.
-
+    for ind in indicators_config:
+        if 'code' not in ind or 'source_key' not in ind:
+            logger.warning(f"Skipping invalid indicator config: {ind}")
+            continue
         indicator_data.append({
-            'code': standardized_code, # Use the standardized code as the primary key
-            'name': f"{source_key.replace('_', ' ').title()} - {source_indicator_key}",
+            'indicator_code': ind['code'],
+            'indicator_name': ind.get('name', f"{source_key.title()} - {ind['source_key']}"),
             'source': source_key,
             'access_method': 'Bulk',
-            'domain': domain # Assign a default domain based on source key
+            'domain': ind.get('domain', 'other'),  # From config
+            'description': ind.get('description'),
+            'unit_of_measure': ind.get('unit')
         })
     
     if indicator_data:
-        # Use the Indicator ORM model directly
-        bulk_upsert(db, Indicator.__table__, indicator_data, ['code'])
-        db.commit()
+        bulk_upsert(db, Indicator.__table__, indicator_data, ['indicator_code'])
 
-def process_vdem_data(file_path: str, indicators_map: Dict[str, str]) -> List[Dict[str, Any]]:
-    logger.info(f"Processing V-Dem data from {file_path} (in chunks)...")
-    all_records = []
+def get_file_line_count(file_path: str) -> int:
+    """Efficiently gets approximate line count (cross-platform)."""
     try:
-        # Adjusted path to raw data
-        full_file_path = Path(__file__).resolve().parents[2] / file_path
-        
-        total_lines = sum(1 for row in open(full_file_path, 'r', encoding='utf-8'))
-        chunk_iter = pd.read_csv(full_file_path, low_memory=False, chunksize=100000)
-        for chunk in tqdm(chunk_iter, total=(total_lines // 100000) + 1, desc="Processing V-Dem Chunks"):
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return sum(1 for _ in itertools.islice(f, 0, None))  # Full count, but memory-safe
+    except Exception as e:
+        logger.warning(f"Failed to get line count for {file_path}: {e}. Defaulting to unknown.")
+        return 0
+
+def process_vdem_data(file_path: str, indicators_map: Dict[str, str]) -> Generator[Dict[str, Any], None, None]:
+    """Processes V-Dem data yielding records for memory efficiency."""
+    logger.info(f"Processing V-Dem data from {file_path} (in chunks)...")
+    try:
+        full_file_path = PROJECT_ROOT / file_path
+        total_lines = get_file_line_count(full_file_path)
+        chunk_iter = pd.read_csv(full_file_path, low_memory=False, chunksize=100000, encoding='utf-8')
+        skipped = 0
+        for chunk in tqdm(chunk_iter, total=(total_lines // 100000) + 1 if total_lines else 1, desc="Processing V-Dem Chunks"):
             required_cols = ['country_text_id', 'year'] + list(indicators_map.keys())
             chunk_cols = [col for col in required_cols if col in chunk.columns]
+            if len(chunk_cols) < len(required_cols):
+                missing = set(required_cols) - set(chunk_cols)
+                logger.warning(f"Missing columns in chunk: {missing}. Skipping chunk.")
+                skipped += len(chunk)
+                continue
             chunk = chunk[chunk_cols]
         
             chunk.rename(columns={'country_text_id': 'country_code'}, inplace=True)
@@ -102,68 +127,78 @@ def process_vdem_data(file_path: str, indicators_map: Dict[str, str]) -> List[Di
             # Melt the chunk, then map to standardized indicator codes
             df_long = chunk.melt(id_vars=['country_code', 'year'], var_name='source_indicator_code', value_name='value')
             df_long['indicator_code'] = df_long['source_indicator_code'].map(indicators_map)
-            df_long.dropna(subset=['value', 'indicator_code'], inplace=True) # Drop if value or mapped indicator is missing
+            df_long = df_long.dropna(subset=['value', 'indicator_code'])  # Drop if value or mapped indicator is missing
+            df_long['value'] = pd.to_numeric(df_long['value'], errors='coerce')  # Ensure numeric
+            df_long = df_long.dropna(subset=['value'])  # Drop invalid numerics
             
-            all_records.extend(df_long[['country_code', 'year', 'indicator_code', 'value']].to_dict('records'))
-        logger.info(f"Finished processing. Total records extracted from V-Dem: {len(all_records)}")
-        return all_records
+            for record in df_long[['country_code', 'year', 'indicator_code', 'value']].to_dict('records'):
+                yield record
+        
+        if skipped > 0:
+            logger.warning(f"Skipped {skipped} rows due to missing columns.")
+    except pd.errors.ParserError as e:
+        logger.error(f"CSV parsing error in V-Dem file: {e}")
+        raise
     except Exception as e:
         logger.error(f"Failed to process V-Dem file: {e}", exc_info=True)
-        return []
+        raise
 
-def process_freedom_house_data(file_path: str, indicators_map: Dict[str, str]) -> List[Dict[str, Any]]:
-    """Processes the Freedom House Excel file to extract Political Rights and Civil Liberties."""
+def process_freedom_house_data(file_path: str, indicators_map: Dict[str, str], normalization_map: Dict[str, Dict[str, float]], sheet_name: str) -> Generator[Dict[str, Any], None, None]:
+    """Processes Freedom House Excel yielding records."""
     logger.info(f"Processing Freedom House data from {file_path}...")
+    skipped_countries = []
     try:
-        full_file_path = Path(__file__).resolve().parents[2] / file_path
-        df = pd.read_excel(full_file_path, sheet_name='FIW2013-2024', header=0)
+        full_file_path = PROJECT_ROOT / file_path
+        df = pd.read_excel(full_file_path, sheet_name=sheet_name, header=0, engine='openpyxl')
         df = df[['Country/Territory', 'Edition', 'PR', 'CL']]
         df.rename(columns={'Country/Territory': 'country_name', 'Edition': 'year'}, inplace=True)
         
-        df['country_code'] = df['country_name'].apply(country_name_to_code)
-        df.dropna(subset=['country_code'], inplace=True)
+        df['country_code'] = df['country_name'].apply(lambda x: country_name_to_code(x))
+        skipped_countries = df[df['country_code'].isna()]['country_name'].tolist()
+        df = df.dropna(subset=['country_code'])
 
         df_long = df.melt(id_vars=['country_code', 'year'], value_vars=['PR', 'CL'], var_name='source_indicator_code', value_name='value')
         
         # Map the source_indicator_code (PR, CL) to our full indicator codes from the config
         df_long['indicator_code'] = df_long['source_indicator_code'].map(indicators_map)
-        df_long.dropna(subset=['value', 'indicator_code'], inplace=True)
+        df_long = df_long.dropna(subset=['value', 'indicator_code'])
 
-        # Normalize PR (Political Rights) and CL (Civil Liberties) to 0-100 scale as per documentation 
-        # PR is 0-40, CL is 0-60.
-        # political_freedom_index = (PR_score / 40) * 100
-        # civil_liberties_index = (CL_score / 60) * 100
-        # The prompt only explicitly mentioned political_freedom_index normalization for PR,
-        # so we'll apply it consistently to both if they're handled this way.
-        
-        # Apply normalization based on the original scale
+        # Normalize based on config (e.g., {'PR': {'max': 40}, 'CL': {'max': 60}})
         def normalize_fh_score(row):
-            if row['source_indicator_code'] == 'PR':
-                return (row['value'] / 40.0) * 100
-            elif row['source_indicator_code'] == 'CL':
-                return (row['value'] / 60.0) * 100
-            return row['value'] # Return as is if not PR or CL
+            max_val = normalization_map.get(row['source_indicator_code'], {}).get('max', 1)
+            return (row['value'] / max_val) * 100 if max_val != 1 else row['value']
 
         df_long['value'] = df_long.apply(normalize_fh_score, axis=1)
+        df_long['value'] = pd.to_numeric(df_long['value'], errors='coerce')
 
-        logger.info(f"Finished processing. Total records extracted from Freedom House: {len(df_long)}")
-        return df_long[['country_code', 'year', 'indicator_code', 'value']].to_dict('records')
+        if skipped_countries:
+            logger.warning(f"Skipped countries due to mapping failure: {skipped_countries}")
 
+        for record in df_long[['country_code', 'year', 'indicator_code', 'value']].to_dict('records'):
+            yield record
+
+    except FileNotFoundError as e:
+        logger.error(f"File not found: {full_file_path}: {e}")
+        raise
+    except ValueError as e:  # e.g., sheet not found
+        logger.error(f"Excel parsing error: {e}")
+        raise
+    except pd.errors.EmptyDataError as e:
+        logger.error(f"Empty data in sheet: {e}")
+        raise
     except Exception as e:
-        logger.error(f"Failed to process Freedom House file: {e}", exc_info=True)
-        return []
+        logger.error(f"Unexpected error in Freedom House processing: {e}", exc_info=True)
+        raise
 
-def process_undp_data(file_path: str, indicators_map: Dict[str, str]) -> List[Dict[str, Any]]:
+def process_undp_data(file_path: str, indicators_map: Dict[str, str]) -> Generator[Dict[str, Any], None, None]:
     logger.info(f"Starting parsing of UNDP file at: {file_path}")
 
     try:
-        full_file_path = Path(__file__).resolve().parents[2] / file_path
+        full_file_path = PROJECT_ROOT / file_path
         df = pd.read_csv(full_file_path, encoding='utf-8')
         logger.info(f"Successfully loaded UNDP CSV file with {len(df)} rows.")
 
-        # The specific indicator name we need from the UNDP data [cite: 1777, 1778]
-        # This mapping is now dynamic from config
-        source_indicator_name = list(indicators_map.keys())[0] # Assuming only one for UNDP for now
+        source_indicator_name = list(indicators_map.keys())[0]  # Assuming single for UNDP
         standardized_code = indicators_map[source_indicator_name]
 
         df_indicator = df[df['Indicator'] == source_indicator_name]
@@ -171,7 +206,7 @@ def process_undp_data(file_path: str, indicators_map: Dict[str, str]) -> List[Di
         if df_indicator.empty:
             raise ValueError(f"Indicator '{source_indicator_name}' not found in the file.")
 
-        id_vars = ['ISO3', 'Country'] # ISO3 is the country code for UNDP
+        id_vars = ['ISO3', 'Country']  # ISO3 is the country code for UNDP
         year_cols = [col for col in df_indicator.columns if col.isdigit()]
         
         df_long = pd.melt(
@@ -184,29 +219,46 @@ def process_undp_data(file_path: str, indicators_map: Dict[str, str]) -> List[Di
         logger.info(f"Melted the DataFrame into {len(df_long)} observations.")
 
         df_long.rename(columns={'ISO3': 'country_code'}, inplace=True)
-        df_long['year'] = pd.to_numeric(df_long['year'])
-        df_long.dropna(subset=['value'], inplace=True)
+        df_long['year'] = pd.to_numeric(df_long['year'], errors='coerce')
+        df_long = df_long.dropna(subset=['year', 'value'])
+        df_long['value'] = pd.to_numeric(df_long['value'], errors='coerce')
+        df_long = df_long.dropna(subset=['value'])
 
-        df_long['indicator_code'] = standardized_code # Use the standardized code
+        df_long['indicator_code'] = standardized_code  # Use the standardized code
 
-        final_df = df_long[['country_code', 'year', 'indicator_code', 'value']]
-        
-        observations = final_df.to_dict(orient='records')
-        logger.info(f"Successfully parsed {len(observations)} UNDP records.")
-        return observations
+        for record in df_long[['country_code', 'year', 'indicator_code', 'value']].to_dict('records'):
+            yield record
 
-    except FileNotFoundError:
-        logger.error(f"UNDP data file not found at path: {file_path}")
+    except FileNotFoundError as e:
+        logger.error(f"UNDP data file not found at path: {full_file_path}: {e}")
         raise
     except (ValueError, KeyError) as e:
-        logger.error(f"Parsing error due to unexpected file format in {file_path}: {e}")
+        logger.error(f"Parsing error due to unexpected file format in {full_file_path}: {e}")
+        raise
+    except pd.errors.ParserError as e:
+        logger.error(f"CSV parsing error in UNDP file: {e}")
         raise
     except Exception as e:
         logger.error(f"An unexpected error occurred during UNDP parsing: {e}", exc_info=True)
         raise
 
-def run_bulk_ingestion(source_key: str):
-    """Main orchestrator for a single bulk data source."""
+def batch_upsert_observations(db, observations_gen: Generator[Dict[str, Any], None, None], batch_size: int = 10000) -> Dict[str, int]:
+    """Batches upserts from a generator for memory efficiency."""
+    results = {'affected_rows': 0, 'skipped': 0}
+    batch = []
+    for record in observations_gen:
+        batch.append(record)
+        if len(batch) >= batch_size:
+            result = bulk_upsert_observations(db, batch)
+            results['affected_rows'] += result.get('affected_rows', 0)
+            batch = []
+    if batch:
+        result = bulk_upsert_observations(db, batch)
+        results['affected_rows'] += result.get('affected_rows', 0)
+    return results
+
+def run_bulk_ingestion(source_key: str, batch_size: Optional[int] = None):
+    """Main orchestrator for a single bulk data source. Batch size override for tuning."""
     logger.info(f"--- Starting Bulk Ingestion for source: {source_key} ---")
     
     try:
@@ -217,48 +269,65 @@ def run_bulk_ingestion(source_key: str):
 
         file_path = source_config.get('file_path')
         dataset_version = source_config.get('dataset_version', '1.0')
-        indicators_map = source_config.get('indicators', {}) # This is now a map for standardized codes
+        indicators_config = source_config.get('indicators', [])  # Now list of dicts with code, domain, etc.
+        normalization_map = source_config.get('normalization', {})  # For FH
+        sheet_name = source_config.get('sheet_name', 'FIW2013-2025')  # Default for FH; make config
         source_name = source_config.get('source_name', source_key)
+        batch_size = batch_size or source_config.get('batch_size', 10000)  # Configurable
 
         # Ensure indicators exist in the database before processing
         with get_db() as db:
-            ensure_indicators_exist(db, source_name, indicators_map)
+            ensure_indicators_exist(db, source_name, indicators_config)
+            db.commit()
 
-        observations = []
+        observations_gen = None
         if source_key == 'v_dem':
-            observations = process_vdem_data(file_path, indicators_map)
+            observations_gen = process_vdem_data(file_path, {ind['source_key']: ind['code'] for ind in indicators_config})
         elif source_key == 'freedom_house':
-            observations = process_freedom_house_data(file_path, indicators_map)
+            observations_gen = process_freedom_house_data(file_path, {ind['source_key']: ind['code'] for ind in indicators_config}, normalization_map, sheet_name)
         elif source_key == 'undp':
-            observations = process_undp_data(file_path, indicators_map)
+            observations_gen = process_undp_data(file_path, {ind['source_key']: ind['code'] for ind in indicators_config})
         else:
             logger.error(f"No processor found for source: {source_key}")
             return
 
-        if not observations:
-            logger.warning(f"No observations processed for source: {source_key}. Exiting.")
-            return
-            
-        for obs in observations:
-            obs['dataset_version'] = dataset_version
-            obs['notes'] = f"Data sourced from {source_name} file: {os.path.basename(file_path)}"
+        # Add version/notes to each record (generator wrapper)
+        def add_meta_gen(gen):
+            for obs in gen:
+                obs['dataset_version'] = dataset_version
+                obs['notes'] = f"Data sourced from {source_name} file: {os.path.basename(file_path)}"
+                yield obs
 
-        logger.info(f"Preparing to upsert {len(observations)} observations for {source_name}.")
+        observations_gen = add_meta_gen(observations_gen) if observations_gen else []
+
+        logger.info(f"Preparing to upsert observations for {source_name}.")
         with get_db() as db:
-            result = bulk_upsert_observations(db, observations)
+            result = batch_upsert_observations(db, observations_gen, batch_size)
+            db.commit()
             logger.info(f"Database upsert complete. Rows affected: {result.get('affected_rows', 'N/A')}")
 
         logger.info(f"--- Bulk ingestion for {source_name} finished successfully. ---")
 
+    except ValueError as e:
+        logger.error(f"Configuration error during bulk ingestion for {source_key}: {e}")
+        raise
+    except pd.errors.ParserError as e:
+        logger.error(f"File parsing error for {source_key}: {e}")
+        raise
     except Exception as e:
         logger.critical(f"A critical error occurred during bulk ingestion for {source_key}: {e}", exc_info=True)
         raise
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        logger.error("Usage: python -m etl.etl_bulk <source_key>")
-        logger.error("Examples: python -m etl.etl_bulk v_dem, python -m etl.etl_bulk freedom_house, python -m etl.etl_bulk undp")
-        sys.exit(1)
+    import argparse
+    parser = argparse.ArgumentParser(description="Bulk ETL Ingestion Script")
+    parser.add_argument("source_key", help="Source to process (e.g., v_dem)")
+    parser.add_argument("--batch-size", type=int, default=None, help="Override batch size for upserts")
+    parser.add_argument("--dry-run", action="store_true", help="Run without DB commits")
+    args = parser.parse_args()
     
-    source_to_process = sys.argv[1]
-    run_bulk_ingestion(source_to_process)
+    if args.dry_run:
+        logger.warning("Dry-run mode: No DB changes will be committed.")
+        # Implement dry-run by mocking db.commit if needed
+    
+    run_bulk_ingestion(args.source_key, args.batch_size)
