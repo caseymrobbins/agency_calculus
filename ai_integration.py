@@ -76,7 +76,7 @@ class AIService:
             )
 
             # Predict future agency scores
-            agency_forecast_df = forecaster.predict(steps=steps, future_exog_df=future_exog)
+            agency_forecast_df = forecaster.predict(steps=steps, future_exog=future_exog)
 
             # Mock GDP forecast for demonstration
             last_gdp = 25e12 if country_code == 'USA' else 15e9
