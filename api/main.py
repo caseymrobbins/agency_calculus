@@ -12,7 +12,7 @@ from slowapi.errors import RateLimitExceeded
 
 # --- Local Imports ---
 from ai_integration import ai_service
-from database import get_iqa_notes, save_iqa_note
+from api.database import get_iqa_notes, save_iqa_note
 
 # --- Configuration & Logging ---
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

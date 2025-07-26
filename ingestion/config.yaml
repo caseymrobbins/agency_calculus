@@ -39,38 +39,35 @@ world_bank:
       value_range: {min: 0, max: 100}
 
 # Section for Bulk Data Ingestion (Task 1.3)
-v_dem:
-  file_path: "${DATA_ROOT}/data/raw/V-Dem-CY-Full+Others-v15.csv"
-  dataset_version: "V-Dem-v15"
-  source_name: "V-Dem"
-  batch_size: 100000
+vdem:
+  file_path: data/raw/V-Dem-CY-Full+Others-v15.csv
+  dataset_version: v15
+  indicators:
+    - v2x_polyarchy
+    - v2x_libdem
+    - v2x_partipdem
+    - v2x_delibdem
+    - v2x_egaldem
+    - v2x_freexp_altinf
+    - v2x_frassoc_thick
+    - v2x_suffr
+    - v2x_elecoff
+    - v2xcl_rol
+    - v2x_cspart
+    - v2pepwrsoc
+    - v2clprptyw  # Corrected from v2pepwreco; this is women's property rights (economic rights proxy)
+    - v2xpe_exlsocgr  # Corrected from v2xpe_exlsoc; exclusion by socio-economic group
+    - v2xpe_exlpol
+    - v2x_egal
+    - v2xpe_exlgeo
+etl:
+  chunksize: 10000
   countries:
     - USA
     - HTI
-  indicators:
-    - source_key: v2eltrnout
-      code: VDEM_VOTER_TURNOUT
-      name: "Voter Turnout (% of registered voters)"
-      domain: political
-      type: percentage
-      value_range: {min: 0, max: 100}
-    - source_key: v2cacamps
-      code: VDEM_POLARIZATION
-      name: "Societal Polarization"
-      domain: political
-      type: numeric
-      value_range: {min: 0, max: 4}
-      normalization: {max: 4}
-    - source_key: v2psoppaut
-      code: VDEM_OPPOSITION_AUTONOMY
-      name: "Opposition Parties Autonomy"
-      domain: political
-      type: numeric
-      value_range: {min: 0, max: 4}
-      normalization: {max: 4}
 
 freedom_house:
-  file_path: "${DATA_ROOT}/data/raw/All Data, FIW 2013-2024 (Excel Download).xlsx"
+  file_path: "${DATA_ROOT}/All Data, FIW 2013-2024 (Excel Download).xlsx"
   dataset_version: "FIW-2024"
   source_name: "Freedom-House"
   sheet_name: "All Data"
@@ -94,7 +91,7 @@ freedom_house:
       normalization: {max: 60}
 
 undp:
-  file_path: "${DATA_ROOT}/data/raw/UNDP_Human_Development_Report_2025.csv"
+  file_path: "${DATA_ROOT}/UNDP_Human_Development_Report_2025.csv"
   dataset_version: "UNDP-HDR-2025"
   source_name: "UNDP"
   countries:
@@ -109,7 +106,7 @@ undp:
       value_range: {min: 0, max: 20}
 
 transparency_international:
-  file_path: "${DATA_ROOT}/data/raw/CPI_2025.csv"
+  file_path: "${DATA_ROOT}/CPI_2025.csv"
   dataset_version: "CPI-2025"
   source_name: "Transparency-International"
   countries:
@@ -138,3 +135,6 @@ validation:
   min_year: 1990
   max_year: 2025
   required_countries: [USA, HTI]
+
+database:
+  url: postgresql://caseyrobbins@localhost/agency_monitor

@@ -45,4 +45,8 @@ psycopg2-binary>=2.9.9
 pycountry>=22.3.5
 tqdm>=4.62.0
 pandera>=0.20.4
-requests
+requests>=2.26.0
+slowapi>=0.1.8
+transformers>=4.30.0
+tenacity>=8.2.0
+

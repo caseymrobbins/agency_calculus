@@ -48,11 +48,11 @@ def api_request(method: str, endpoint: str, **kwargs) -> Any:
 @st.cache_data(ttl=600)
 def get_forecast_data(country_code: str, weighting: str) -> pd.DataFrame:
     """Fetches and processes forecast data from the API."""
-    response = api_request('GET', f"country/{country_code}/forecast", params={"weighting": weighting, "steps": 10})
+    response = api_request('GET', f"country/{country_code}/forecast", params={"weighting_scheme": weighting, "steps": 10})
     if not response or 'forecast' not in response:
         return pd.DataFrame()
     
-    # FIX: Initialize records list
+    # Process the forecast data
     records = []
     for item in response['forecast']:
         year = item['year']
@@ -72,33 +72,55 @@ def get_forecast_data(country_code: str, weighting: str) -> pd.DataFrame:
 def render_forecast_view(historical_df: pd.DataFrame):
     st.header("Brittleness Forecast")
     
-    # FIX: Added options for the selectbox based on the Adversarial Weighting Protocol.
-    weighting_options = ["framework_average", "libertarian", "socialist", "communitarian"]
+    # Only show available weighting options
+    weighting_options = ["framework_average"]  # Only use what's implemented
     weighting = st.selectbox("Select Adversarial Weighting Scheme", options=weighting_options)
 
     if weighting:
-        forecast_df = get_forecast_data(st.session_state.country_code, weighting)
+        with st.spinner("Fetching forecast data..."):
+            forecast_df = get_forecast_data(st.session_state.country_code, weighting)
         
         if forecast_df.empty:
-            st.warning("Data not available to display forecast.")
+            st.warning("Unable to generate forecast. Please check if the API is running and models are loaded.")
             return
 
-        # Using a proxy for historical brittleness for visualization purposes
-        hist_data = (1 - historical_df[st.session_state.agency_cols].mean(axis=1)) * 10 if not historical_df.empty else pd.Series(name='brittleness_score_proxy')
-        fore_data = forecast_df['brittleness_score'].dropna()
+        # Create visualization
+        if 'brittleness_score' in forecast_df.columns:
+            # Using historical proxy for visualization
+            hist_data = (1 - historical_df[st.session_state.agency_cols].mean(axis=1)) * 10 if not historical_df.empty else pd.Series(name='brittleness_score_proxy')
+            fore_data = forecast_df['brittleness_score'].dropna()
 
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data, mode='lines', name='Historical (Proxy)'))
-        fig.add_trace(go.Scatter(x=fore_data.index, y=fore_data, mode='lines', name='Forecast', line=dict(dash='dot')))
-        
-        # FIX: Provided a value for yaxis_range for the 0-10 brittleness score.
-        fig.update_layout(
-            title=f"Brittleness Score Forecast ({weighting})",
-            yaxis_title="Brittleness Score (0-10)",
-            xaxis_title="Year",
-            yaxis_range=[0, 10]
-        )
-        st.plotly_chart(fig, use_container_width=True)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data, mode='lines', name='Historical (Proxy)'))
+            fig.add_trace(go.Scatter(x=fore_data.index, y=fore_data, mode='lines', name='Forecast', line=dict(dash='dot')))
+            
+            fig.update_layout(
+                title=f"Brittleness Score Forecast ({weighting})",
+                yaxis_title="Brittleness Score (0-10)",
+                xaxis_title="Year",
+                yaxis_range=[0, 10]
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Show agency scores breakdown
+            agency_cols = [col for col in forecast_df.columns if 'agency' in col]
+            if agency_cols:
+                st.subheader("Agency Scores Breakdown")
+                agency_fig = go.Figure()
+                for col in agency_cols:
+                    agency_fig.add_trace(go.Scatter(
+                        x=forecast_df.index, 
+                        y=forecast_df[col], 
+                        mode='lines', 
+                        name=col.replace('_agency', '').title()
+                    ))
+                agency_fig.update_layout(
+                    title="Forecasted Agency Scores by Domain",
+                    yaxis_title="Agency Score",
+                    xaxis_title="Year",
+                    yaxis_range=[0, 1]
+                )
+                st.plotly_chart(agency_fig, use_container_width=True)
 
 def render_explanation_view():
     st.header("Model Explanation")
@@ -108,12 +130,12 @@ def render_explanation_view():
     if st.button(f"Explain Forecast for {explain_year}"):
         with st.spinner("Generating explanation..."):
             explanation = api_request('POST', f"country/{st.session_state.country_code}/explain", json={'year': explain_year})
-            if explanation:
+            if explanation and 'explanation' in explanation:
                 st.subheader(f"Feature Impact on Domain Forecasts for {explain_year}")
-                domain_to_show = st.selectbox("Select Domain to Explain", options=list(explanation.keys()))
+                domain_to_show = st.selectbox("Select Domain to Explain", options=list(explanation['explanation'].keys()))
                 
                 if domain_to_show:
-                    domain_explanation = explanation[domain_to_show]
+                    domain_explanation = explanation['explanation'][domain_to_show]
                     st.metric("Predicted Residual", f"{domain_explanation['predicted_residual']:.4f}", 
                               help=f"Base (average) residual was {domain_explanation['base_value']:.4f}")
                     
@@ -124,25 +146,26 @@ def render_explanation_view():
                     fig = px.bar(impact_df.sort_values(by='Impact', key=abs), x='Impact', y='Feature', orientation='h',
                                  title=f"Top Feature Contributions for {domain_to_show}", color='Impact', color_continuous_scale='RdBu')
                     st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.error("Could not generate explanation. Please check if the year has available data.")
 
 # --- Main App Logic ---
 st.title("🚨 Agency Monitor")
 st.sidebar.title("Controls")
 
-# FIX: Added options for the selectbox based on project validation targets.
+# Country selection
 country_name = st.sidebar.selectbox("Select Country", options=["United States", "Haiti"])
 st.session_state.country_code = "USA" if country_name == "United States" else "HTI"
 st.session_state.agency_cols = ['economic_agency', 'political_agency', 'social_agency', 'health_agency', 'educational_agency']
 
-# In a real app, this would also fetch historical data via API
-# For now, we generate a placeholder
+# Generate placeholder historical data
 historical_df = pd.DataFrame(
     np.random.rand(20, 5) * 0.4 + 0.5,
     columns=st.session_state.agency_cols,
     index=pd.RangeIndex(start=2004, stop=2024, name="year")
 )
 
-# FIX: Added titles for the tabs
+# Tabs
 tab1, tab2, tab3 = st.tabs(["Forecast", "Explanation", "Transparency"])
 
 with tab1:
@@ -151,7 +174,7 @@ with tab2:
     render_explanation_view()
 with tab3:
     st.header("Radical Transparency Protocol")
-    st.markdown("In accordance with the Agency Calculus 4.3 'Bill of Rights for the Analyzed,' this project adheres to a radical transparency mandate.[1]")
+    st.markdown("In accordance with the Agency Calculus 4.3 'Bill of Rights for the Analyzed,' this project adheres to a radical transparency mandate.")
     st.subheader("Core Formulas")
     st.latex(r"B_{sys} = \frac{\text{Nominal GDP}}{A_{total}}")
     st.latex(r"V(\alpha) = C \times |\Delta A| \times D_{amp}")

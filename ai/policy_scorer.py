@@ -140,3 +140,10 @@ if __name__ == '__main__':
     scores = scorer.score_policy_text(sample_text)
     scorer.export_for_iqa(sample_text, scores)
     print(scores)
+
+     # Add this at the end of ai/policy_scorer.py
+def score_policy_text(text: str, **kwargs) -> Dict:
+    """Wrapper function for backward compatibility"""
+    scorer = PolicyScorer()
+    # Assuming the PolicyScorer has a score method
+    return scorer.score(text, **kwargs)
