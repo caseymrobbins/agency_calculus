@@ -41,6 +41,9 @@ def load_training_data(country_code):
 
         # Pivot to wide format: years as rows, indicators as columns
         df_pivoted = df.pivot(index='year', columns='indicator_code', values='value')
+        
+        # *** FIX: Convert year index to DatetimeIndex ***
+        df_pivoted.index = pd.to_datetime(df_pivoted.index, format='%Y')
 
         # Define endog (target vars, e.g., core agency indices) and exog (features, e.g., freedoms/equality)
         endog_columns = [col for col in df_pivoted.columns if col in ['v2x_polyarchy', 'v2x_libdem', 'v2x_egaldem']]  # Example targets
@@ -57,7 +60,14 @@ def load_training_data(country_code):
 
 def train_model(country_code):
     endog_df, exog_df = load_training_data(country_code)
-    model = HybridForecaster(var_order=1, max_iter=100)  # Adjust params as needed
+    
+    # Create model with correct parameter names
+    model = HybridForecaster(max_lags=1)  # Uses default XGBoost params
+    
+    # Alternative with custom XGBoost parameters:
+    # xgb_params = {'n_estimators': 100, 'max_depth': 6, 'learning_rate': 0.05}
+    # model = HybridForecaster(max_lags=1, xgb_params=xgb_params)
+    
     model.fit(endog_df, exog_df)
 
     model_path = f"models/{country_code}_hybrid_model.pkl"

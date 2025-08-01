@@ -1,55 +1,123 @@
-# Configuration for ETL ingestion scripts.
-# This file defines target countries and indicators for various data sources.
-
-# Section for the World Bank API Ingestion (Task 1.2)
 world_bank:
-  # Target countries using their ISO 3166-1 alpha-3 codes.
-  # As per the validation plan, we start with USA and Haiti.
+  # Countries to fetch data for (ISO 3-letter codes)
   countries:
-    - USA
-    - HTI
-
-  # World Bank indicators identified in the data sourcing research document.
-  # These cover the Economic, Health, and Educational domains.
-  indicators:
-    # Economic Agency Indicators
-    - code: NY.GDP.MKTP.CD
-      name: "GDP (current US$)"
-    - code: NY.GDP.PCAP.CD
-      name: "GDP per capita (current US$)"
-    - code: SL.UEM.TOTL.ZS
-      name: "Unemployment, total (% of total labor force) (modeled ILO estimate)"
-    - code: SI.POV.GINI
-      name: "Gini index"
-
-    # Health Agency Indicators
-    - code: SP.DYN.LE00.IN
-      name: "Life expectancy at birth, total (years)"
-    - code: SP.DYN.IMRT.IN
-      name: "Mortality rate, infant (per 1,000 live births)"
-    - code: SH.XPD.GHED.GD.ZS
-      name: "Domestic general government health expenditure (% of GDP)"
-
-    # Educational Agency Indicators
-    - code: SE.ADT.LITR.ZS
-      name: "Literacy rate, adult total (% of people ages 15 and above)"
-    - code: SE.XPD.TOTL.GD.ZS
-      name: "Government expenditure on education, total (% of GDP)"
-
-  # Section for Bulk Data Ingestion (Task 1.3)
-  v_dem:
-    # Path to the raw CSV file within our data folder
-    file_path: "data/raw/V-Dem-CY-Full+Others-v15.csv"
-    # The version we will tag this data with in the database
-    dataset_version: "V-Dem-v15"
-    # The specific source name for logging
-    source_name: "V-Dem"
-
+    - "USA"
+    - "CHN" 
+    - "JPN"
+    - "DEU"
+    - "GBR"
+    - "FRA"
+    - "IND"
+    - "ITA"
+    - "BRA"
+    - "CAN"
+    - "RUS"
+    - "KOR"
+    - "AUS"
+    - "ESP"
+    - "MEX"
+    - "IDN"
+    - "NLD"
+    - "SAU"
+    - "TUR"
+    - "CHE"
   
-paths:
-  raw_historical_data: data/historical/raw_historical_cases.json
-  featured_data: data/processed/featured_historical_cases.json
-  production_model: ai/models/brittleness_predictor_prod.pkl
-  metrics: ai/models/prod_metrics.json
-  plot: ai/models/feature_importance.png
-  validation_cases: data/validation_cases.jsonm
+  # World Bank indicators to fetch
+  indicators:
+    # Economic indicators
+    - "NY.GDP.MKTP.CD"        # GDP (current US$)
+    - "NY.GDP.PCAP.CD"        # GDP per capita (current US$)
+    - "SI.POV.GINI"           # Gini index
+    - "SL.UEM.TOTL.ZS"        # Unemployment, total (% of total labor force)
+    - "SI.POV.DDAY"           # Poverty headcount ratio at $1.90 a day
+    - "NE.TRD.GNFS.ZS"        # Trade (% of GDP)
+    - "GC.DOD.TOTL.GD.ZS"     # Central government debt, total (% of GDP)
+    - "FP.CPI.TOTL.ZG"        # Inflation, consumer prices (annual %)
+    
+    # Social indicators
+    - "SP.POP.TOTL"           # Population, total
+    - "SP.DYN.LE00.IN"        # Life expectancy at birth
+    - "SE.ADT.LITR.ZS"        # Literacy rate, adult total
+    - "SP.URB.TOTL.IN.ZS"     # Urban population (% of total)
+    - "SH.STA.MMRT"           # Maternal mortality ratio
+    
+    # Health indicators
+    - "SH.XPD.CHEX.GD.ZS"     # Current health expenditure (% of GDP)
+    - "SH.DYN.MORT"           # Mortality rate, under-5
+    - "SH.IMM.IDPT"           # Immunization, DPT (% of children ages 12-23 months)
+    - "SH.H2O.BASW.ZS"        # People using at least basic drinking water services (% of population)
+    
+    # Education indicators
+    - "SE.XPD.TOTL.GD.ZS"     # Government expenditure on education (% of GDP)
+    - "SE.PRM.NENR"           # School enrollment, primary (% net)
+    - "SE.SEC.NENR"           # School enrollment, secondary (% net)
+    - "SE.TER.ENRR"           # School enrollment, tertiary (% gross)
+    
+    # Governance/Political indicators
+    - "IQ.CPA.TRAN.XQ"        # CPIA transparency, accountability (1=low to 6=high)
+    - "IQ.CPA.PUBS.XQ"        # CPIA quality of public administration (1=low to 6=high)
+    
+    # Infrastructure/Technology
+    - "IT.NET.USER.ZS"        # Individuals using the Internet (% of population)
+    - "EG.ELC.ACCS.ZS"        # Access to electricity (% of population)
+    - "IS.ROD.PAVE.ZS"        # Roads, paved (% of total roads)
+    
+    # Environmental
+    - "EN.ATM.CO2E.PC"        # CO2 emissions (metric tons per capita)
+    - "AG.LND.FRST.ZS"        # Forest area (% of land area)
+    
+  # Date range
+  start_year: 1960
+  end_year: 2024
+  
+  # ETL settings
+  batch_size: 100
+  max_retries: 3
+  timeout: 30
+
+# Agency Calculus specific configuration
+agency_calculus:
+  # Domain weights for calculating total agency
+  domain_weights:
+    economic: 0.25
+    political: 0.20
+    social: 0.20
+    health: 0.20
+    educational: 0.15
+  
+  # Indicator mappings to agency domains
+  indicator_domains:
+    # Economic domain indicators
+    economic:
+      - "NY.GDP.PCAP.CD"      # GDP per capita (positive correlation)
+      - "SL.UEM.TOTL.ZS"      # Unemployment (negative correlation)
+      - "SI.POV.GINI"         # Gini coefficient (negative correlation)
+      - "SI.POV.DDAY"         # Poverty rate (negative correlation)
+      - "NE.TRD.GNFS.ZS"      # Trade openness (positive correlation)
+    
+    # Political domain indicators
+    political:
+      - "IQ.CPA.TRAN.XQ"      # Transparency/accountability
+      - "IQ.CPA.PUBS.XQ"      # Quality of public administration
+    
+    # Social domain indicators
+    social:
+      - "SP.DYN.LE00.IN"      # Life expectancy
+      - "SE.ADT.LITR.ZS"      # Literacy rate
+      - "SP.URB.TOTL.IN.ZS"   # Urbanization
+      - "IT.NET.USER.ZS"      # Internet access
+    
+    # Health domain indicators
+    health:
+      - "SH.XPD.CHEX.GD.ZS"   # Health expenditure
+      - "SH.DYN.MORT"         # Child mortality (negative correlation)
+      - "SH.STA.MMRT"         # Maternal mortality (negative correlation)
+      - "SH.H2O.BASW.ZS"      # Access to clean water
+      - "SH.IMM.IDPT"         # Immunization coverage
+    
+    # Educational domain indicators
+    educational:
+      - "SE.XPD.TOTL.GD.ZS"   # Education expenditure
+      - "SE.PRM.NENR"         # Primary enrollment
+      - "SE.SEC.NENR"         # Secondary enrollment
+      - "SE.TER.ENRR"         # Tertiary enrollment

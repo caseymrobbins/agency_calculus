@@ -1,71 +1,103 @@
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import joblib
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
-import yaml
 import os
+import logging
+from datetime import datetime, timezone
+from typing import List, Dict, Any
+from sqlalchemy import create_engine, text, Column, Integer, String, Float, DateTime, Text, UniqueConstraint
+from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import SQLAlchemyError
 
-# Load config
-def load_config(config_path='../ingestion/config.yaml'):
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
-    return config
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-config = load_config()
-engine = create_engine(config['database']['url'])
-Session = sessionmaker(bind=engine)
+# Create base class for models
+Base = declarative_base()
 
-# Sidebar for selection
-st.sidebar.title("Agency Calculus Dashboard")
-country = st.sidebar.selectbox("Select Country", config['etl']['countries'])
-indicator = st.sidebar.selectbox("Select Indicator", config['vdem']['indicators'])
-forecast_steps = st.sidebar.slider("Forecast Steps", min_value=1, max_value=10, value=5)
+# --- ORM Models (should match your schema) ---
+class Indicator(Base):
+    __tablename__ = 'indicators'
+    indicator_code = Column(String(100), primary_key=True)
+    name = Column(String(500), nullable=False)
+    description = Column(Text)
+    unit = Column(String(255))
+    source = Column(String(255))
+    topic = Column(String(255))
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
-# Main content
-st.title(f"Agency Metrics for {country}")
+class Observation(Base):
+    __tablename__ = 'observations'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    country_code = Column(String(10), nullable=False)
+    indicator_code = Column(String(100), nullable=False)
+    year = Column(Integer, nullable=False)
+    value = Column(Float, nullable=False)
+    dataset_version = Column(String(100))
+    notes = Column(Text)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    
+    # FIX: Changed the constraint name to match the SQL schema file
+    __table_args__ = (UniqueConstraint('country_code', 'indicator_code', 'year', 'dataset_version', name='unique_observation'),)
 
-# Fetch and display historical data
-db = Session()
-try:
-    stmt = text("""
-        SELECT year, value 
-        FROM observations 
-        WHERE country_code = :country AND indicator_code = :indicator
-        ORDER BY year
-    """)
-    df = pd.read_sql(stmt, db.bind, params={'country': country, 'indicator': indicator})
-finally:
-    db.close()
 
-if df.empty:
-    st.error(f"No data available for {country} - {indicator}")
-else:
-    fig = px.line(df, x='year', y='value', title=f"Historical {indicator} for {country}")
-    st.plotly_chart(fig)
+# --- Database Connection ---
+def get_db_session():
+    """Get a new database session."""
+    database_url = os.getenv('DATABASE_URL', 'postgresql://caseyrobbins@localhost:5432/agency_monitor')
+    engine = create_engine(database_url)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    return SessionLocal()
 
-    # Load model and forecast
-    model_path = f"../models/{country}_hybrid_model.pkl"
-    if os.path.exists(model_path):
-        model = joblib.load(model_path)
+# --- Bulk Operations ---
+def bulk_upsert_indicators(indicators: List[Dict[str, Any]]) -> int:
+    """Bulk upsert indicators using ON CONFLICT DO UPDATE."""
+    if not indicators: return 0
+    
+    session = get_db_session()
+    try:
+        stmt = pg_insert(Indicator).values(indicators)
+        update_cols = {col.name: getattr(stmt.excluded, col.name) for col in Indicator.__table__.columns if not col.primary_key}
+        final_stmt = stmt.on_conflict_do_update(index_elements=['indicator_code'], set_=update_cols)
         
-        # Dummy exog for forecast (in real use, prepare future exog based on trends or inputs)
-        exog_future = pd.DataFrame(0, index=range(forecast_steps), columns=['v2x_freexp_altinf'])  # Example; adjust to actual exog columns
+        result = session.execute(final_stmt)
+        session.commit()
+        return result.rowcount
+    except SQLAlchemyError as e:
+        logger.error(f"Database error during indicator upsert: {e}")
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+def bulk_upsert_observations(observations: List[Dict[str, Any]]) -> int:
+    """More robust bulk upsert for observations using SQLAlchemy's dialect-specific insert."""
+    if not observations: return 0
+
+    session = get_db_session()
+    try:
+        stmt = pg_insert(Observation).values(observations)
         
-        try:
-            predictions = model.predict(steps=forecast_steps, exog=exog_future)
-            if isinstance(predictions, pd.DataFrame) and indicator in predictions.columns:
-                pred_df = pd.DataFrame({
-                    'year': range(df['year'].max() + 1, df['year'].max() + forecast_steps + 1),
-                    'value': predictions[indicator]
-                })
-                st.subheader(f"Forecast for Next {forecast_steps} Years")
-                fig_pred = px.line(pred_df, x='year', y='value', title=f"Forecasted {indicator}")
-                st.plotly_chart(fig_pred)
-            else:
-                st.warning("Forecast not available for this indicator.")
-        except Exception as e:
-            st.error(f"Forecast error: {str(e)}")
-    else:
-        st.warning("Trained model not found. Run train_models.py first.")
+        update_cols = {
+            'value': stmt.excluded.value,
+            'dataset_version': stmt.excluded.dataset_version,
+            'notes': stmt.excluded.notes,
+            'updated_at': stmt.excluded.updated_at
+        }
+        
+        # FIX: Changed the constraint name to match the SQL schema file
+        final_stmt = stmt.on_conflict_do_update(
+            constraint='unique_observation',
+            set_=update_cols
+        )
+        
+        result = session.execute(final_stmt)
+        session.commit()
+        return result.rowcount
+    except SQLAlchemyError as e:
+        logger.error(f"Database error during observation upsert: {e}")
+        session.rollback()
+        raise
+    finally:
+        session.close()

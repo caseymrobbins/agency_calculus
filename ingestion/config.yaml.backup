@@ -2,10 +2,6 @@
 # File: ingestion/config.yaml
 config_version: "1.0.0"
 
-# ETL Configuration for model training
-etl:
-  countries: ['USA', 'CHN', 'DEU', 'IND', 'JPN', 'GBR', 'FRA', 'ITA', 'CAN', 'BRA', 'HTI', 'SDN', 'MMR']  # All countries for model training pipeline
-
 # Section for the World Bank API Ingestion
 world_bank:
   countries: ['USA', 'CHN', 'JPN', 'DEU', 'IND', 'GBR', 'FRA', 'ITA', 'CAN', 'BRA']
@@ -70,19 +66,11 @@ world_bank:
       name: School enrollment, tertiary (% gross)
       value_range: {min: 0}
 
-# Configuration for ETL ingestion scripts in the Agency Monitor project.
-# File: ingestion/config.yaml
-
+# Replace your current v_dem section with this simple format:
 v_dem:
-  # List of countries to filter for (ISO 3166-1 alpha-3 codes)
-  countries: ['USA', 'CHN', 'DEU', 'IND', 'JPN', 'GBR', 'FRA', 'ITA', 'CAN', 'BRA', 'HTI']
-  
-  # Year range for data extraction
+  countries: ['USA', 'CHN', 'DEU', 'IND', 'JPN', 'GBR', 'FRA', 'ITA', 'CAN', 'BRA', 'HTI', 'SDN', 'MMR']
   start_year: 1960
   end_year: 2024
-  
-  # List of specific V-Dem indicator columns to extract and load.
-  # These exact names must exist as columns in the CSV file.
   indicators:
     - v2x_polyarchy
     - v2x_libdem
@@ -95,7 +83,7 @@ v_dem:
     - v2xcl_rol
     - v2x_cspart
     - v2pepwrsoc
-
+# Section for Freedom House (for future use)
 freedom_house:
   file_path: "data/raw/All_data_FIW_2013-2024.xlsx"
   dataset_version: "FIW-2024"

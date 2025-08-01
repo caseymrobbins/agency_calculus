@@ -1,183 +1,283 @@
+#!/usr/bin/env python3
+"""
+World Bank Data ETL Script for Agency Calculus
+File: etl/etl_world_bank.py
+
+This script fetches data from the World Bank API and loads it into PostgreSQL.
+"""
+
 import os
 import sys
 import logging
-from datetime import date, datetime
+import argparse
 import yaml
-from tenacity import retry, stop_after_attempt, wait_exponential
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
-from pathlib import Path
-import pandera.pandas as pa  # Updated import
-from pandera import Column, Check, DataFrameSchema
+import wbgapi as wb
 import pandas as pd
-import requests
-import time
-import pycountry
+from dotenv import load_dotenv
 
-# Add project root to path to allow module imports
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.append(str(PROJECT_ROOT))
+# Add parent directory to path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from api.database import get_db, bulk_upsert_observations
+from agency_calculus.api.database import bulk_upsert_observations, bulk_upsert_countries, bulk_upsert_indicators
 
-# --- Configuration ---
+# Load environment variables
+load_dotenv()
+
+# Create logs directory if it doesn't exist
+os.makedirs('logs', exist_ok=True)
+
+# Setup logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(), logging.FileHandler('world_bank_ingestion.log')]
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('logs/etl_world_bank.log'),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 
-def load_config(config_path: str = 'ingestion/config.yaml') -> dict:
-    """Loads and validates the main configuration file, expanding env vars."""
-    try:
-        full_config_path = PROJECT_ROOT / config_path
-        with open(full_config_path, 'r') as f:
-            config_str = f.read()
-        config_str = os.path.expandvars(config_str)
-        config = yaml.safe_load(config_str)
-        if not config:
-            raise ValueError("Configuration file is empty")
-        return config
-    except Exception as e:
-        logger.critical(f"FATAL: Could not load config from {full_config_path}: {e}")
-        raise
-
-def create_pandera_schema(indicators_list: List[Dict[str, Any]]) -> DataFrameSchema:
-    """Creates a pandera schema for validation based on indicators list."""
-    columns = {
-        'country_code': Column(str, checks=Check.str_length(3, 3), nullable=False),
-        'year': Column(int, checks=Check.ge(1960), nullable=False),
-        'indicator_code': Column(str, nullable=False),
-        'value': Column(float, nullable=False)
-    }
-    for ind in indicators_list:
-        if 'value_range' in ind:
-            min_val = float(ind['value_range'].get('min', float('-inf')))
-            max_val = float(ind['value_range'].get('max', float('inf')))
-            columns['value'].checks.append(Check.in_range(min_val, max_val))
-    return DataFrameSchema(columns)
-
-def iso3_to_iso2(iso3: str) -> Optional[str]:
-    """Converts ISO3 country code to ISO2 using pycountry."""
-    country = pycountry.countries.get(alpha_3=iso3)
-    if country:
-        return country.alpha_2
-    else:
-        logger.warning(f"Invalid ISO3 code: {iso3}")
-        return None
-
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-def fetch_world_bank_data_batch(
-    country_codes: List[str],
-    indicators: Dict[str, str],
-    start_year: int = 1960,
-    end_year: Optional[int] = None,
-    batch_size: int = 20
-) -> List[Dict]:
-    """Fetches time-series data for multiple countries and indicators using direct API calls."""
-    logger.info(f"Starting direct API fetch for {len(country_codes)} countries and {len(indicators)} indicators.")
-    current_year = datetime.now().year
-    end_year = end_year or (current_year - 1)
-    end_year = min(end_year, current_year - 1)
-    all_records = []
-    dropped = 0
-    base_url = "https://api.worldbank.org/v2/country/{country}/indicator/{ind}?date={start}:{end}&format=json&per_page=1000"
-
-    for ind_code, ind_name in indicators.items():
-        for i in range(0, len(country_codes), batch_size):
-            batch_countries = country_codes[i:i + batch_size]
-            logger.info(f"Fetching {ind_name} ({ind_code}) for batch {i//batch_size + 1}: {batch_countries}")
-            for country in batch_countries:
-                country_iso2 = iso3_to_iso2(country)
-                if not country_iso2:
-                    continue
-                url = base_url.format(country=country_iso2, ind=ind_code, start=start_year, end=end_year)
-                try:
-                    response = requests.get(url)
-                    response.raise_for_status()
-                    data = response.json()
-                    if len(data) < 2 or not isinstance(data[1], list):
-                        logger.warning(f"No data for {country}/{ind_code}")
-                        continue
-                    entries = data[1]
-                    for entry in entries:
-                        if entry['value'] is not None:
-                            all_records.append({
-                                'country_code': entry['countryiso3code'],
-                                'year': int(entry['date']),
-                                'indicator_code': ind_code,
-                                'value': float(entry['value'])
-                            })
-                        else:
-                            dropped += 1
-                    time.sleep(0.5)
-                except requests.exceptions.RequestException as e:
-                    logger.error(f"API fetch failed for {country}/{ind_code}: {e}")
+class WorldBankETL:
+    """World Bank ETL processor."""
     
-    if dropped > 0:
-        logger.warning(f"Dropped {dropped} entries due to null values.")
-    logger.info(f"Successfully fetched and processed {len(all_records)} records from World Bank API.")
-    return all_records
-
-def run_ingestion(config_path: str = 'ingestion/config.yaml', dry_run: bool = False):
-    """Main function to orchestrate the World Bank data ingestion pipeline."""
-    logger.info("--- Starting World Bank Data Ingestion Pipeline ---")
-    try:
-        config = load_config(config_path)
-        wb_config = config.get('world_bank', {})
-        countries = wb_config.get('countries', [])
-        indicators_list = wb_config.get('indicators', [])
+    def __init__(self, config_path: str = 'ingestion/config.yaml'):
+        """Initialize the ETL processor."""
+        self.config = self._load_config(config_path)
+        self.batch_size = self.config.get('world_bank', {}).get('batch_size', 100)
+        self.dataset_version = f"WB-API-{datetime.now().strftime('%Y-%m-%d')}"
         
-        if not countries or not indicators_list:
-            raise ValueError("Config must specify 'world_bank.countries' and 'world_bank.indicators'.")
-            
-        indicators_dict = {ind['code']: ind['name'] for ind in indicators_list}
-        
-        validation_schema = create_pandera_schema(indicators_list)
-        
-        all_observations = fetch_world_bank_data_batch(countries, indicators_dict)
-        
-        dataset_version = f"WB-API-{date.today().isoformat()}"
-        for obs in all_observations:
-            obs['dataset_version'] = dataset_version
-            obs['notes'] = f"Data sourced from World Bank API on {date.today().isoformat()}"
-            
-        if not all_observations:
-            logger.warning("No new observations were fetched from the World Bank API.")
-            return
-
-        df_obs = pd.DataFrame(all_observations)
+    def _load_config(self, config_path: str) -> Dict[str, Any]:
+        """Load configuration from YAML file."""
         try:
-            df_obs = validation_schema.validate(df_obs, lazy=True)
-        except pa.errors.SchemaErrors as e:
-            logger.warning(f"Validation failed with {len(e.failure_cases)} errors: {e}. Dropping invalid rows.")
-            invalid_indices = e.failure_cases['index'].unique()
-            df_obs = df_obs.drop(index=invalid_indices).reset_index(drop=True)
-            if df_obs.empty:
-                logger.error("All rows invalid after validation. No data to upsert.")
-                return
-        all_observations = df_obs.to_dict('records')
+            # Expand environment variables in path
+            config_path = os.path.expandvars(config_path)
+            with open(config_path, 'r') as f:
+                config_str = f.read()
+                # Expand environment variables in content
+                config_str = os.path.expandvars(config_str)
+                return yaml.safe_load(config_str)
+        except FileNotFoundError:
+            logger.error(f"Config file not found: {config_path}")
+            raise
+        except yaml.YAMLError as e:
+            logger.error(f"Error parsing config file: {e}")
+            raise
+    
+    def fetch_countries(self) -> List[Dict[str, Any]]:
+        """Fetch country metadata from World Bank."""
+        logger.info("Fetching country metadata...")
+        
+        countries = []
+        for country_code in self.config['world_bank']['countries']:
+            try:
+                # Get country information from World Bank API
+                country_info = wb.economy.info(country_code)
+                if hasattr(country_info, 'get') and country_info:
+                    countries.append({
+                        'country_code': country_code,
+                        'name': country_info.get('value', country_code),
+                        'region': country_info.get('region', {}).get('value', ''),
+                        'income_level': country_info.get('incomeLevel', {}).get('value', ''),
+                        'created_at': datetime.now(timezone.utc),
+                        'updated_at': datetime.now(timezone.utc)
+                    })
+                    logger.info(f"✅ Fetched metadata for {country_code}")
+                else:
+                    logger.warning(f"⚠️ No metadata found for {country_code}")
+                    
+            except Exception as e:
+                logger.error(f"❌ Error fetching metadata for {country_code}: {e}")
+                
+            # Always add basic entry (fallback or primary)
+            if not any(c['country_code'] == country_code for c in countries):
+                countries.append({
+                    'country_code': country_code,
+                    'name': country_code,
+                    'region': '',
+                    'income_level': '',
+                    'created_at': datetime.now(timezone.utc),
+                    'updated_at': datetime.now(timezone.utc)
+                })
+        
+        logger.info(f"Fetched {len(countries)} countries")
+        return countries
+    
+    def fetch_indicators(self) -> List[Dict[str, Any]]:
+        """Fetch indicator metadata from World Bank."""
+        logger.info("Fetching indicator metadata...")
+        
+        indicators = []
+        # Handle complex indicator structure from config
+        for indicator_config in self.config['world_bank']['indicators']:
+            indicator_code = indicator_config['code']  # Extract code from config object
+            try:
+                # Get indicator information from World Bank API
+                indicator_info = wb.series.info(indicator_code)
+                if hasattr(indicator_info, 'get') and indicator_info:
+                    indicators.append({
+                        'indicator_code': indicator_code,
+                        'name': indicator_config.get('name', indicator_info.get('value', indicator_code))[:500],
+                        'description': str(indicator_info.get('sourceNote', ''))[:1000] if indicator_info.get('sourceNote') else '',
+                        'unit': indicator_info.get('unit', ''),
+                        'source': str(indicator_info.get('source', {}).get('value', 'World Bank'))[:255],
+                        'topic': str(indicator_info.get('topics', [{}])[0].get('value', ''))[:255] if indicator_info.get('topics') else '',
+                        'created_at': datetime.now(timezone.utc),
+                        'updated_at': datetime.now(timezone.utc)
+                    })
+                    logger.info(f"✅ Fetched metadata for {indicator_code}")
+                else:
+                    logger.warning(f"⚠️ No API metadata found for {indicator_code}, using config metadata")
+                    
+            except Exception as e:
+                logger.error(f"❌ Error fetching API metadata for {indicator_code}: {e}")
+                
+            # Always add entry with config metadata (fallback or primary)
+            if not any(ind['indicator_code'] == indicator_code for ind in indicators):
+                indicators.append({
+                    'indicator_code': indicator_code,
+                    'name': indicator_config.get('name', indicator_code)[:500],
+                    'description': f"World Bank indicator {indicator_code}",
+                    'unit': '',
+                    'source': 'World Bank',
+                    'topic': 'Economic/Social',
+                    'created_at': datetime.now(timezone.utc),
+                    'updated_at': datetime.now(timezone.utc)
+                })
+        
+        logger.info(f"Fetched {len(indicators)} indicators")
+        return indicators
+    
+    def fetch_observations(self) -> List[Dict[str, Any]]:
+        """Fetch observation data from World Bank."""
+        logger.info("Fetching observation data...")
+        
+        countries = self.config['world_bank']['countries']
+        # Extract indicator codes from complex structure
+        indicators = [ind['code'] for ind in self.config['world_bank']['indicators']]
+        start_year = self.config['world_bank']['start_year']
+        end_year = self.config['world_bank']['end_year']
+        
+        observations = []
+        
+        for indicator_code in indicators:
+            logger.info(f"Fetching data for indicator: {indicator_code}")
+            
+            try:
+                # Fetch data for all countries and years for this indicator
+                df = wb.data.DataFrame(
+                    series=indicator_code,
+                    economy=countries,
+                    time=range(start_year, end_year + 1),
+                    skipAggs=True,  # Skip aggregates
+                    numericTimeKeys=True
+                )
+                
+                if df.empty:
+                    logger.warning(f"⚠️ No data returned for {indicator_code}")
+                    continue
+                
+                # Reset index to get country codes and years as columns
+                df = df.reset_index()
+                
+                # Melt the dataframe to get observations in long format
+                df_melted = df.melt(
+                    id_vars=['economy'],
+                    var_name='year',
+                    value_name='value'
+                )
+                
+                # Clean and prepare data
+                df_melted = df_melted.dropna(subset=['value'])  # Remove null values
+                df_melted['indicator_code'] = indicator_code
+                df_melted['dataset_version'] = self.dataset_version
+                df_melted['notes'] = f'Data sourced from World Bank API on {datetime.now().strftime("%Y-%m-%d")}'
+                df_melted['created_at'] = datetime.now(timezone.utc)
+                df_melted['updated_at'] = datetime.now(timezone.utc)
+                
+                # Rename columns to match database schema
+                df_melted = df_melted.rename(columns={'economy': 'country_code'})
+                
+                # Convert to list of dictionaries
+                indicator_observations = df_melted.to_dict('records')
+                observations.extend(indicator_observations)
+                
+                logger.info(f"✅ Fetched {len(indicator_observations)} observations for {indicator_code}")
+                
+            except Exception as e:
+                logger.error(f"❌ Error fetching data for {indicator_code}: {e}")
+                continue
+        
+        logger.info(f"Total observations fetched: {len(observations)}")
+        return observations
+    
+    def load_data(self, countries: List[Dict], indicators: List[Dict], observations: List[Dict], dry_run: bool = False):
+        """Load data into database."""
+        if dry_run:
+            logger.info("DRY RUN - Would insert:")
+            logger.info(f"  {len(countries)} countries")
+            logger.info(f"  {len(indicators)} indicators")
+            logger.info(f"  {len(observations)} observations")
+            if observations:
+                logger.info(f"  Sample observation: {observations[0]}")
+            return
+        
+        logger.info("Loading data into database...")
+        
+        # Load countries
+        if countries:
+            rows_affected = bulk_upsert_countries(countries)
+            logger.info(f"✅ Loaded {rows_affected} countries")
+        
+        # Load indicators
+        if indicators:
+            rows_affected = bulk_upsert_indicators(indicators)
+            logger.info(f"✅ Loaded {rows_affected} indicators")
+        
+        # Load observations in batches
+        if observations:
+            total_loaded = 0
+            for i in range(0, len(observations), self.batch_size):
+                batch = observations[i:i + self.batch_size]
+                rows_affected = bulk_upsert_observations(batch)
+                total_loaded += rows_affected
+                logger.info(f"✅ Loaded batch {i//self.batch_size + 1}: {rows_affected} observations")
+            
+            logger.info(f"✅ Total observations loaded: {total_loaded}")
+    
+    def run(self, dry_run: bool = False):
+        """Run the complete ETL process."""
+        logger.info("Starting World Bank ETL process...")
+        
+        try:
+            # Fetch data
+            countries = self.fetch_countries()
+            indicators = self.fetch_indicators()
+            observations = self.fetch_observations()
+            
+            # Load data
+            self.load_data(countries, indicators, observations, dry_run)
+            
+            logger.info("✅ World Bank ETL process completed successfully!")
+            
+        except Exception as e:
+            logger.error(f"❌ ETL process failed: {e}")
+            raise
 
-        logger.info(f"Preparing to upsert {len(all_observations)} observations into the database.")
-        with get_db() as db:
-            result = bulk_upsert_observations(db, all_observations)
-            if not dry_run:
-                db.commit()
-            else:
-                db.rollback()
-                logger.info("Dry-run: Rolled back changes.")
-            logger.info(f"Database upsert complete. Rows affected: {result.get('affected_rows', 'N/A')}")
-
-        logger.info("--- World Bank data ingestion finished successfully. ---")
-    except Exception as e:
-        logger.critical(f"A critical error occurred in the ETL pipeline: {e}", exc_info=True)
-        raise
-
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="World Bank ETL Ingestion Script")
-    parser.add_argument("--config-path", default="ingestion/config.yaml", help="Path to config.yaml")
-    parser.add_argument("--dry-run", action="store_true", help="Run without DB commits")
+def main():
+    """Main function."""
+    parser = argparse.ArgumentParser(description='World Bank Data ETL')
+    parser.add_argument('--config', '-c', default='ingestion/config.yaml', 
+                       help='Configuration file path')
+    parser.add_argument('--dry-run', action='store_true', 
+                       help='Run in dry-run mode (no database writes)')
+    
     args = parser.parse_args()
     
-    run_ingestion(args.config_path, args.dry_run)
+    # Run ETL
+    etl = WorldBankETL(args.config)
+    etl.run(dry_run=args.dry_run)
+
+if __name__ == "__main__":
+    main()

@@ -15,7 +15,7 @@ import pandera as pa  # For data validation
 PROJECT_ROOT = Path(__file__).resolve().parents[2]  # Assuming etl is under src/etl
 sys.path.append(str(PROJECT_ROOT))
 
-from src.api.database import get_db, bulk_upsert, bulk_upsert_observations, Indicator
+from agency_calculus.api.database import get_db, bulk_upsert, bulk_upsert_observations, Indicator
 
 # --- Configuration ---
 logging.basicConfig(

@@ -1,0 +1,47 @@
+          # Simple V-Dem configuration for testing
+          countries:
+          countries:
+              - "USA"
+              - "CHN" 
+              - "JPN"
+              - "DEU"
+              - "GBR"
+              - "FRA"
+              - "IND"
+              - "ITA"
+              - "BRA"
+              - "CAN"
+              - "RUS"
+              - "KOR"
+              - "AUS"
+              - "ESP"
+              - "MEX"
+              - "IDN"
+              - "NLD"
+              - "SAU"
+              - "TUR"
+              - "CHE"
+
+          start_year: 1960
+          end_year: 2024
+
+          # Key V-Dem indicators for political agency
+          indicators:
+            indicators:
+              - v2x_polyarchy
+              - v2x_libdem
+              - v2x_partipdem
+              - v2x_delibdem
+              - v2x_egaldem
+              - v2x_freexp_altinf
+              - v2x_frassoc_thick
+              - v2x_suffr
+              - v2x_elecoff
+              - v2xcl_rol
+              - v2x_cspart
+              - v2pepwrsoc
+              - v2clprptyw  # Corrected from v2pepwreco; this is women's property rights (economic rights proxy)
+              - v2xpe_exlsocgr  # Corrected from v2xpe_exlsoc; exclusion by socio-economic group
+              - v2xpe_exlpol
+              - v2x_egal
+              - v2xpe_exlgeo
